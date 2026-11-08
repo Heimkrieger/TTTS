@@ -12,7 +12,7 @@ export const SUPPORT_URL = ''
  * https://feedback.<имя>.workers.dev/report. Пусто - форма работает, но вместо отправки
  * предлагает скопировать текст.
  */
-export const FEEDBACK_URL = ''
+export const FEEDBACK_URL = 'https://tts-feedback.ttsdev.workers.dev/report'
 
 /**
  * Откуда брать обновления: репозиторий GitHub "владелец/имя" (релизы с архивом и подписью).
