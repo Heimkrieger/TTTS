@@ -520,17 +520,17 @@ body,
   position: relative;
 }
 
+/* Меню рисуется в body с координатами от кнопки (см. MuteButton). */
 .menu {
-  position: absolute;
-  right: 0;
-  top: 30px;
+  position: fixed;
   z-index: var(--z-menu);
+  width: 220px;
   background: var(--color-paper-3);
   border-radius: var(--radius-panel);
   padding: var(--space-1);
-  min-width: 200px;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 8px 24px oklch(0% 0 0 / 0.35);
 }
 
 .menu-title {

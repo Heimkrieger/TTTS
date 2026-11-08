@@ -25,6 +25,12 @@ describe('очистка отчёта от личных данных', () => {
     const t = scrub(`Authorization: Bearer abc.def-123 token=xyz api_key: qwe ${key}`)
     expect(t).not.toMatch(/abc\.def|xyz|qwe|aaaaaaaa/)
   })
+  it('время в журнале не считается IP-адресом', () => {
+    expect(scrub('[2026-11-08 21:14:02.118] [info] старт')).toBe(
+      '[2026-11-08 21:14:02.118] [info] старт'
+    )
+    expect(scrub('адрес fe80::1:2 и 2001:db8:0:0:0:0:2:1')).toBe('адрес <ip> и <ip>')
+  })
   it('обычный текст не портится', () => {
     expect(scrub('Озвучка зависла после смены голоса, версия 0.0.1')).toBe(
       'Озвучка зависла после смены голоса, версия 0.0.1'

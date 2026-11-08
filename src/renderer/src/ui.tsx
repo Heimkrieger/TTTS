@@ -1,5 +1,6 @@
 // Общие мелочи интерфейса: иконки, меню мьюта, форматирование времени.
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const PATHS = {
   play: 'M8 5v14l11-7z',
@@ -83,45 +84,77 @@ export const MUTE_OPTIONS: [number, string][] = [
 ]
 
 /** Кнопка мьюта с выбором срока. */
+/** Ширина и высота меню мьюта (для выбора, куда его открыть). */
+const MENU_W = 220
+const MENU_H = 260
+
+/** Где открыть меню у кнопки: под ней, если помещается, иначе над ней; не за край окна. */
+function place(el: HTMLElement | null): { left: number; top: number } | null {
+  if (!el || !el.isConnected) return null
+  const r = el.getBoundingClientRect()
+  if (r.bottom < 0 || r.top > window.innerHeight) return null
+  const top = r.bottom + 4 + MENU_H <= window.innerHeight ? r.bottom + 4 : r.top - 4 - MENU_H
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - MENU_W - 8)
+  return { left, top: Math.max(8, top) }
+}
+
 export function MuteButton({ login }: { login: string }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
+  // Меню рисуется поверх всего окна (в document.body), а не внутри строки: иначе его
+  // обрезает край ленты и перекрывают соседние сообщения.
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const open = pos !== null
   useEffect(() => {
     if (!open) return
-    const close = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    const close = (e: Event): void => {
+      const t = e.target as Node
+      if (ref.current?.contains(t) || menuRef.current?.contains(t)) return
+      setPos(null)
     }
+    // Лента прокручивается сама (новые сообщения) или окно меняет размер: меню едет за кнопкой.
+    // Кнопка ушла за экран или исчезла - меню закрывается.
+    const follow = (): void => setPos(place(ref.current))
     window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
+    window.addEventListener('scroll', follow, true)
+    window.addEventListener('resize', follow)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('scroll', follow, true)
+      window.removeEventListener('resize', follow)
+    }
   }, [open])
+  const toggle = (): void => setPos(open ? null : place(ref.current))
   return (
     <div className="menu-wrap" ref={ref}>
-      <IconButton icon="mute" title={`Мьют для ${login}`} onClick={() => setOpen((v) => !v)} />
-      {open && (
-        <div className="menu">
-          <div className="menu-title">Мьют {login} на</div>
-          {MUTE_OPTIONS.map(([min, label]) => (
+      <IconButton icon="mute" title={`Мьют для ${login}`} onClick={toggle} />
+      {pos &&
+        createPortal(
+          <div className="menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
+            <div className="menu-title">Мьют {login} на</div>
+            {MUTE_OPTIONS.map(([min, label]) => (
+              <button
+                key={min}
+                onClick={() => {
+                  setPos(null)
+                  void window.api.actions.mute(login, min)
+                }}
+              >
+                {label}
+              </button>
+            ))}
             <button
-              key={min}
+              className="danger"
               onClick={() => {
-                setOpen(false)
-                void window.api.actions.mute(login, min)
+                setPos(null)
+                void window.api.actions.blacklist(login, true)
               }}
             >
-              {label}
+              Навсегда (чёрный список)
             </button>
-          ))}
-          <button
-            className="danger"
-            onClick={() => {
-              setOpen(false)
-              void window.api.actions.blacklist(login, true)
-            }}
-          >
-            Навсегда (чёрный список)
-          </button>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   )
 }
