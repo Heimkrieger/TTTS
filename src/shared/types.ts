@@ -169,6 +169,8 @@ export interface FeedbackReport {
   appVersion: string
   /** Версия Windows, например "Windows 10.0.26200". */
   os: string
+  /** Когда отправлено, по часам пользователя: "08.11.2026 21:32 (UTC+3)". Совпадает со временем в журнале. */
+  sentAt: string
   log: string
 }
 

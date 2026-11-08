@@ -2,7 +2,13 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { FeedbackSender, MIN_INTERVAL_MS, buildReport, scrub } from '../src/main/feedback'
+import {
+  FeedbackSender,
+  MIN_INTERVAL_MS,
+  buildReport,
+  localTime,
+  scrub
+} from '../src/main/feedback'
 import type { FeedbackReport } from '../src/shared/types'
 
 describe('очистка отчёта от личных данных', () => {
@@ -100,8 +106,14 @@ describe('отправка отзыва', () => {
     contact: '',
     appVersion: '0.0.1',
     os: 'Windows 10',
+    sentAt: '08.11.2026 21:32 (UTC+3)',
     log: ''
   }
+
+  it('время отправки: дата, время и пояс пользователя', () => {
+    const t = localTime(new Date(2026, 10, 8, 21, 32).getTime())
+    expect(t).toMatch(/^08\.11\.2026 21:32 \(UTC[+-]\d{1,2}(:\d{2})?\)$/)
+  })
 
   it('адрес не задан - понятная причина, без отправки', async () => {
     const s = new FeedbackSender('', async () => ({ status: 200 }))

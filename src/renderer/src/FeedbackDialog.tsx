@@ -10,12 +10,14 @@ import { Segmented } from './controls'
 export function reportText(r: FeedbackReport): string {
   return [
     `${r.kind === 'bug' ? 'Ошибка' : 'Идея'} | версия ${r.appVersion} | ${r.os}`,
+    `Дата: ${r.sentAt.split(' ')[0]}`,
+    `Время: ${r.sentAt.split(' ').slice(1).join(' ')}`,
     r.contact ? `Связаться: ${r.contact}` : '',
     '',
     r.text,
     r.log ? `\n--- журнал ---\n${r.log}` : ''
   ]
-    .filter((x, i) => x !== '' || i === 2)
+    .filter((x, i) => x !== '' || i === 4)
     .join('\n')
 }
 

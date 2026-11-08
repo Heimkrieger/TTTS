@@ -43,8 +43,16 @@ export default {
     const text = str(r.text, 4000).trim()
     if (text.length < 5) return json(400, { ok: false, error: 'empty' })
 
+    // Время отправки: по часам пользователя (совпадает с журналом), у старых версий - время
+    // получения по UTC.
+    const when =
+      str(r.sentAt, 60) ||
+      `${new Date().toISOString().slice(0, 16).replace('T', ' ')} (UTC, получено)`
     const head = [
       `${kind} | версия ${str(r.appVersion, 30)} | ${str(r.os, 60)}`,
+      // "08.11.2026 21:33 (UTC+3)" - дата и время отдельными строками.
+      `Дата: ${when.split(' ')[0]}`,
+      `Время: ${when.split(' ').slice(1).join(' ')}`,
       r.contact ? `Связаться: ${str(r.contact, 200)}` : ''
     ]
       .filter(Boolean)

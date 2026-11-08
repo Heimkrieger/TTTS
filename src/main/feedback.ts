@@ -73,6 +73,17 @@ function replaceWord(text: string, word: string, token: string): string {
   )
 }
 
+/** Местное время с поясом: "08.11.2026 21:32 (UTC+3)". В журнале время тоже местное. */
+export function localTime(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  const off = -d.getTimezoneOffset()
+  const h = Math.trunc(Math.abs(off) / 60)
+  const m = Math.abs(off) % 60
+  const zone = `UTC${off < 0 ? '-' : '+'}${h}${m ? `:${p(m)}` : ''}`
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())} (${zone})`
+}
+
 export interface ReportEnv {
   appVersion: string
   os: string
@@ -81,6 +92,8 @@ export interface ReportEnv {
   channels: string[]
   /** Ники зрителей (лента, мьюты, чёрный список): по списку зрителей тоже можно найти канал. */
   viewers: string[]
+  /** Текущее время (для тестов). */
+  now?: number
   /** Пути и имена этого компьютера: папка программы, домашняя папка, имя компьютера и пользователя. */
   literals: string[]
 }
@@ -108,6 +121,7 @@ export function buildReport(draft: FeedbackDraft, env: ReportEnv): FeedbackRepor
     contact: draft.contact.trim().slice(0, 200),
     appVersion: env.appVersion,
     os: env.os,
+    sentAt: localTime(env.now ?? Date.now()),
     log
   }
 }
