@@ -1,16 +1,18 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { compareVersions } from '../src/shared/version'
+import { Updater, parseRelease } from '../src/main/update/updater'
 import {
-  Updater,
   applyScript,
-  parseRelease,
+  psQuote,
   readInstallResult,
-  writeApplyScript
-} from '../src/main/update/updater'
+  unpackUpdate,
+  type InstallPlan
+} from '../src/main/update/install'
 
 describe('сравнение версий', () => {
   it('числа, бета старше окончательной, непонятное - самое старое', () => {
@@ -136,13 +138,54 @@ describe('обновление', () => {
     expect(readInstallResult(dir)?.ok).toBe(false)
   })
 
-  it('скрипт установки не трогает data и запускает программу заново', () => {
-    const s = applyScript()
-    expect(s).toContain("$_.Name -ne 'data'")
-    expect(s).toContain('Start-Process -FilePath $Exe')
-    const dir = mkdtempSync(join(tmpdir(), 'upd-'))
-    const file = writeApplyScript(dir)
-    expect(existsSync(file)).toBe(true)
-    expect(readFileSync(file)[0]).toBe(0xef) // BOM для PowerShell 5.1
+  const plan = (dir: string): InstallPlan => ({
+    zip: join(dir, 'u.zip'),
+    workDir: join(dir, 'update'),
+    appDir: join(dir, "Мои программы'TTS"),
+    exe: join(dir, "Мои программы'TTS", 'TwitchTTS.exe'),
+    appPid: 4242,
+    version: '0.2.0'
   })
+
+  it('скрипт установки не трогает data, пути вписаны в него и запускает программу заново', () => {
+    const p = plan(join('C:', 'x'))
+    const s = applyScript(p)
+    expect(s).toContain("$_.Name -ne 'data'")
+    expect(s).toContain('Start-Process -FilePath $exe')
+    expect(s).toContain(`$appDir = ${psQuote(p.appDir)}`)
+    expect(psQuote(p.appDir)).toContain("программы''TTS")
+    expect(s).toContain('$appPid = 4242')
+  })
+
+  it('кавычки в путях не ломают строки PowerShell', () => {
+    expect(psQuote("a'b")).toBe("'a''b'")
+    expect(psQuote('a’b')).toBe("'a’’b'")
+    expect(psQuote('a b')).toBe("'a b'")
+  })
+
+  it.runIf(process.platform === 'win32')(
+    'архив распаковывается в stage с процентами',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "upd'з "))
+      const src = join(dir, 'src')
+      mkdirSync(join(src, 'resources'), { recursive: true })
+      writeFileSync(join(src, 'TwitchTTS.exe'), 'exe')
+      writeFileSync(join(src, 'resources', 'app.asar'), 'x'.repeat(10000))
+      const p = plan(dir)
+      execFileSync('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `Compress-Archive -Path ${psQuote(join(src, '*'))} -DestinationPath ${psQuote(p.zip)}`
+      ])
+      const seen: number[] = []
+      await unpackUpdate(p, (n) => seen.push(n))
+      expect(seen.at(-1)).toBe(100)
+      expect(readFileSync(join(p.workDir, 'stage', 'resources', 'app.asar'), 'utf8')).toHaveLength(
+        10000
+      )
+      writeFileSync(p.zip, 'не архив')
+      await expect(unpackUpdate(p, () => {})).rejects.toThrow(/не распаковался/)
+    },
+    30_000
+  )
 })

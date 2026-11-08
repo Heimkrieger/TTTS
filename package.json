@@ -1,7 +1,7 @@
 {
   "name": "twitch-tts",
   "productName": "TwitchTTS",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Twitch chat TTS via Fish Audio",
   "main": "./out/main/index.js",

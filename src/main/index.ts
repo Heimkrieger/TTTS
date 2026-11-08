@@ -2,8 +2,8 @@
 import { hostname, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
 import { FEEDBACK_URL, SUPPORT_URL, UPDATE_PUBLIC_KEY, UPDATE_REPO } from '@shared/brand'
-import { spawn } from 'node:child_process'
-import { Updater, readInstallResult, writeApplyScript } from './update/updater'
+import { Updater } from './update/updater'
+import { launchApply, readInstallResult, unpackUpdate, type InstallPlan } from './update/install'
 import type { FeedbackDraft } from '@shared/types'
 import { FeedbackSender, buildReport, httpPostJson } from './feedback'
 import { captionText } from './filters/pipeline'
@@ -619,33 +619,26 @@ void app.whenReady().then(() => {
     const s = await updater.download()
     const zip = updater.readyZip
     if (s.state !== 'ready' || !zip) return s
-    const script = writeApplyScript(updateDir)
-    log.info(`обновление ${s.version}: установка после закрытия`)
-    spawn(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-WindowStyle',
-        'Hidden',
-        '-File',
-        script,
-        '-Zip',
-        zip,
-        '-AppDir',
-        dirname(process.execPath),
-        '-AppPid',
-        String(process.pid),
-        '-Exe',
-        process.execPath,
-        '-Log',
-        join(updateDir, 'install.log'),
-        '-Version',
-        s.version
-      ],
-      { detached: true, stdio: 'ignore', windowsHide: true }
-    ).unref()
+    const plan: InstallPlan = {
+      zip,
+      workDir: updateDir,
+      appDir: dirname(process.execPath),
+      exe: process.execPath,
+      appPid: process.pid,
+      version: s.version
+    }
+    try {
+      updater.installing(0)
+      await unpackUpdate(plan, (p) => updater.installing(p))
+      await launchApply(plan)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      log.error(`обновление ${s.version}: ${msg}`)
+      journal.add('error', `Обновление ${s.version} не установилось: ${msg}`)
+      updater.installFailed(msg)
+      return updater.status
+    }
+    log.info(`обновление ${s.version}: распаковано, установка после закрытия`)
     setTimeout(() => app.quit(), 300)
     return s
   })

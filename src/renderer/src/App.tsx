@@ -50,11 +50,13 @@ function UpdateInfo({ s }: { s: UpdateStatus }): React.JSX.Element {
             ? `Вышла версия ${s.version}: окно обновления появится при следующем запуске.`
             : s.state === 'downloading'
               ? `Скачиваю версию ${s.version}: ${s.percent} %`
-              : s.state === 'ready'
-                ? `Версия ${s.version} скачана и проверена, ставится.`
-                : s.state === 'error'
-                  ? `Не получилось: ${s.error}.`
-                  : 'Программа проверяет обновления при запуске и раз в 6 часов.'
+              : s.state === 'installing'
+                ? `Распаковываю версию ${s.version}: ${s.percent} %`
+                : s.state === 'ready'
+                  ? `Версия ${s.version} скачана и проверена, ставится.`
+                  : s.state === 'error'
+                    ? `Не получилось: ${s.error}.`
+                    : 'Программа проверяет обновления при запуске и раз в 6 часов.'
   return (
     <>
       <p className="small">
@@ -62,7 +64,9 @@ function UpdateInfo({ s }: { s: UpdateStatus }): React.JSX.Element {
       </p>
       {s.state !== 'off' && (
         <button
-          disabled={busy || s.state === 'checking' || s.state === 'downloading'}
+          disabled={
+            busy || s.state === 'checking' || s.state === 'downloading' || s.state === 'installing'
+          }
           onClick={() => {
             setBusy(true)
             void window.api.update.check().then(() => setBusy(false))

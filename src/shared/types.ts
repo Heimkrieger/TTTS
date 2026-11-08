@@ -147,6 +147,8 @@ export type UpdateState =
   | { state: 'available'; version: string; notes: string; sizeMb: number; startup: boolean }
   | { state: 'downloading'; version: string; percent: number }
   | { state: 'ready'; version: string }
+  /** Распаковка перед закрытием программы. */
+  | { state: 'installing'; version: string; percent: number }
   | { state: 'error'; error: string }
 
 export type UpdateStatus = UpdateState & { current: string }

@@ -5,17 +5,10 @@
 // Ed25519 (закрытый ключ только у автора, в программе открытый). Без верной подписи не ставим:
 // так подменённый архив не пройдёт, даже если кто-то получит доступ к релизам.
 //
-// Ставит обновление отдельный скрипт PowerShell после закрытия программы: работающий exe
-// заменить нельзя. Папка data\ (настройки, ключ, кэш) не трогается.
+// Установка - в install.ts: работающий exe заменить нельзя, поэтому файлы меняет отдельный
+// скрипт после закрытия программы. Папка data\ (настройки, ключ, кэш) не трогается.
 import { createHash, createPublicKey, verify } from 'node:crypto'
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { createWriteStream, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { compareVersions } from '@shared/version'
 import type { UpdateState, UpdateStatus } from '@shared/types'
@@ -87,7 +80,8 @@ export class Updater {
    */
   async check(startup = false): Promise<UpdateStatus> {
     if (this.statusValue.state === 'off') return this.statusValue
-    if (this.statusValue.state === 'downloading' || this.statusValue.state === 'ready') {
+    const st = this.statusValue.state
+    if (st === 'downloading' || st === 'ready' || st === 'installing') {
       return this.statusValue
     }
     this.set({ state: 'checking' })
@@ -154,6 +148,16 @@ export class Updater {
       this.set({ state: 'error', error: `обновление не скачалось: ${errText(e)}` })
     }
     return this.statusValue
+  }
+
+  /** Ход установки (распаковка) и её ошибка: показываются в том же окне обновления. */
+  installing(percent: number): void {
+    const r = this.release
+    if (r) this.set({ state: 'installing', version: r.version, percent })
+  }
+
+  installFailed(error: string): void {
+    this.set({ state: 'error', error: `обновление не установилось: ${error}` })
   }
 
   /** Путь к проверенному архиву (после download). */
@@ -223,62 +227,6 @@ export function verifySignature(sha256hex: string, sig: Buffer, publicKeyPem: st
   } catch {
     return false
   }
-}
-
-/**
- * Скрипт установки: ждёт закрытия программы, распаковывает архив поверх папки программы
- * (кроме data\), пишет итог в журнал установки и запускает программу заново.
- */
-export function applyScript(): string {
-  return [
-    'param([string]$Zip, [string]$AppDir, [int]$AppPid, [string]$Exe, [string]$Log, [string]$Version)',
-    "$ErrorActionPreference = 'Stop'",
-    'try {',
-    '  Wait-Process -Id $AppPid -Timeout 60 -ErrorAction SilentlyContinue',
-    '  Start-Sleep -Milliseconds 500',
-    "  $tmp = Join-Path $env:TEMP ('tts-update-' + [guid]::NewGuid())",
-    '  Expand-Archive -LiteralPath $Zip -DestinationPath $tmp -Force',
-    "  Get-ChildItem -LiteralPath $tmp | Where-Object { $_.Name -ne 'data' } | ForEach-Object {",
-    '    Copy-Item -LiteralPath $_.FullName -Destination $AppDir -Recurse -Force',
-    '  }',
-    '  Remove-Item -LiteralPath $tmp -Recurse -Force',
-    '  Remove-Item -LiteralPath $Zip -Force',
-    "  Set-Content -LiteralPath $Log -Value ('OK ' + $Version) -Encoding UTF8",
-    '} catch {',
-    "  Set-Content -LiteralPath $Log -Value ('FAIL ' + $_.Exception.Message) -Encoding UTF8",
-    '}',
-    'Start-Process -FilePath $Exe',
-    ''
-  ].join('\r\n')
-}
-
-/** Итог прошлой установки (если была): строка для журнала, файл удаляется. */
-export function readInstallResult(workDir: string): { ok: boolean; text: string } | null {
-  const file = join(workDir, 'install.log')
-  if (!existsSync(file)) return null
-  try {
-    const line = readFileSync(file, 'utf8')
-      .replace(/^\uFEFF/, '')
-      .trim()
-    rmSync(file, { force: true })
-    if (line.startsWith('OK '))
-      return { ok: true, text: `Программа обновлена до версии ${line.slice(3)}` }
-    return {
-      ok: false,
-      text: `Обновление не установилось: ${line.replace(/^FAIL\s*/, '')}. Программа работает на прежней версии, обновление предложится снова.`
-    }
-  } catch {
-    return null
-  }
-}
-
-/** Записать скрипт установки рядом с архивом. */
-export function writeApplyScript(workDir: string): string {
-  mkdirSync(workDir, { recursive: true })
-  const file = join(workDir, 'apply-update.ps1')
-  // BOM: PowerShell 5.1 без него читает файл не в UTF-8.
-  writeFileSync(file, '\uFEFF' + applyScript(), 'utf8')
-  return file
 }
 
 const mb = (bytes: number): number => Math.round((bytes / 1024 / 1024) * 10) / 10

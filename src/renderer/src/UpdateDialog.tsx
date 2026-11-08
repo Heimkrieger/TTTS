@@ -11,7 +11,7 @@ export function UpdateDialog({ s }: { s: UpdateStatus }): React.JSX.Element | nu
   const [target, setTarget] = useState<string | null>(null)
 
   const startupOffer = s.state === 'available' && s.startup
-  const inProgress = s.state === 'downloading' || s.state === 'ready'
+  const inProgress = s.state === 'downloading' || s.state === 'installing' || s.state === 'ready'
   const showError = s.state === 'error' && target !== null
   if (dismissed || !(startupOffer || inProgress || showError)) return null
 
@@ -44,8 +44,16 @@ export function UpdateDialog({ s }: { s: UpdateStatus }): React.JSX.Element | nu
             </div>
           </>
         )}
+        {s.state === 'installing' && (
+          <>
+            <p>Распаковываю обновление: {s.percent} %</p>
+            <div className="progress" aria-hidden="true">
+              <div style={{ transform: `scaleX(${s.percent / 100})` }} />
+            </div>
+          </>
+        )}
         {s.state === 'ready' && (
-          <p>Обновление проверено. Программа закроется, установит его и запустится заново.</p>
+          <p>Обновление готово. Программа закроется и через несколько секунд запустится заново.</p>
         )}
         {s.state === 'error' && (
           <p className="err">
