@@ -1,0 +1,77 @@
+:root {
+  /* поверхности */
+  --color-paper: oklch(21.5% 0.004 286);
+  --color-paper-0: oklch(19.5% 0.004 286);
+  --color-paper-2: oklch(25.5% 0.008 275);
+  --color-paper-3: oklch(28.5% 0.008 275);
+  --color-field: oklch(18% 0.004 286);
+  --color-rule: oklch(28.5% 0.006 286);
+  --color-rule-2: oklch(34% 0.008 286);
+
+  /* текст */
+  --color-ink: oklch(94% 0.004 286);
+  --color-ink-2: oklch(71% 0.012 286);
+  --color-ink-3: oklch(56% 0.012 286);
+
+  /* роли */
+  --color-accent: oklch(76% 0.12 172);
+  --color-accent-soft: oklch(76% 0.12 172 / 0.14);
+  --color-live: oklch(70% 0.17 28);
+  --color-live-soft: oklch(70% 0.17 28 / 0.14);
+  --color-warn: oklch(82% 0.12 80);
+  --color-warn-soft: oklch(82% 0.12 80 / 0.12);
+  /* значки у ника: стример, модератор, VIP, подписчик, Prime */
+  --badge-broadcaster: oklch(60% 0.19 27);
+  --badge-moderator: oklch(58% 0.14 150);
+  --badge-vip: oklch(60% 0.19 345);
+  --badge-subscriber: oklch(70% 0.13 75);
+  --badge-prime: oklch(62% 0.13 235);
+  --badge-ink: oklch(99% 0 0);
+  --color-scrim: oklch(12% 0.004 286 / 0.62);
+  --color-focus: var(--color-accent);
+
+  /* шрифты */
+  --font-body: 'Golos Text', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, monospace;
+  /* Рисунки из символов в чате: у Segoe UI Symbol брайль одной ширины. */
+  --font-art: 'Segoe UI Symbol', 'Segoe UI', sans-serif;
+
+  /* размеры текста */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 17px;
+
+  /* отступы, шаг 4px */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* форма */
+  --radius-control: 6px;
+  --radius-panel: 8px;
+  --radius-pill: 999px;
+
+  /* движение */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-short: 140ms;
+  --dur-mid: 180ms;
+
+  /* слои */
+  --z-menu: 20;
+  --z-modal: 40;
+
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-short: 0ms;
+    --dur-mid: 0ms;
+  }
+}

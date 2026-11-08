@@ -1,0 +1,44 @@
+# Выпуск версии: метка v<версия> -> проверки, сборка архива, подпись, релиз на GitHub.
+# Программа у стримеров видит релиз и предлагает обновиться.
+# Нужен секрет репозитория UPDATE_SIGN_KEY: закрытый ключ подписи (PEM).
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Метка совпадает с версией в package.json
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "метка ${GITHUB_REF_NAME}, а версия $v"; exit 1; }
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npx vitest run
+      - run: npm run release:zip
+      - name: Подпись архива
+        env:
+          UPDATE_SIGN_KEY: ${{ secrets.UPDATE_SIGN_KEY }}
+        run: npm run release:sign
+      - name: Текст релиза из CHANGELOG.md
+        shell: bash
+        run: node scripts/release-notes.mjs > release/notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release/notes.md
+          files: |
+            release/*/*-win-x64.zip
+            release/*/*-win-x64.zip.sig
+            release/*/*-win-x64.zip.sha256

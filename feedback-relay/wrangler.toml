@@ -1,0 +1,13 @@
+# Посредник для отзывов (Cloudflare Workers). Секреты задаются командами, не здесь:
+#   npx wrangler secret put TG_TOKEN     - ключ бота от @BotFather
+#   npx wrangler secret put TG_CHAT_ID   - id чата автора
+name = "tts-feedback"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+# Защита от спама: не больше 1 отчёта в минуту с одного IP (Workers Rate Limiting).
+# Если Cloudflare не примет блок ниже, его можно убрать: посредник работает и без него.
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 1, period = 60 }

@@ -1,0 +1,11 @@
+*.log
+*.tsbuildinfo
+.devdata
+.env
+build.log
+data
+dist
+node_modules
+out
+release
+.devdata-test/

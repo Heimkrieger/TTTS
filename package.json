@@ -1,0 +1,50 @@
+{
+  "name": "twitch-tts",
+  "productName": "TwitchTTS",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Twitch chat TTS via Fish Audio",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "dist": "npm run build && electron-builder --win",
+    "release:zip": "electron-vite build && electron-builder --win zip --publish never",
+    "release:sign": "node scripts/sign-release.mjs"
+  },
+  "dependencies": {
+    "@fontsource/golos-text": "5.3.0",
+    "electron-log": "5.4.4",
+    "ws": "8.22.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "2.0.0",
+    "@eslint/js": "10.0.1",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/ws": "8.18.2",
+    "@vitejs/plugin-react": "6.2.1",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "electron-vite": "6.0.0",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.14.0",
+    "prettier": "3.9.10",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-virtuoso": "4.18.19",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}

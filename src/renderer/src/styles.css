@@ -1,0 +1,218 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-style: normal;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
+}
+
+.muted {
+  color: var(--color-ink-2);
+}
+
+.small {
+  font-size: var(--text-sm);
+}
+
+.ok {
+  color: var(--color-accent);
+}
+
+.err {
+  color: var(--color-live);
+}
+
+.loading {
+  padding: var(--space-6);
+  color: var(--color-ink-3);
+}
+
+/* ---- поля ---- */
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--color-ink);
+  background: var(--color-field);
+  border: 1px solid var(--color-rule-2);
+  border-radius: var(--radius-control);
+  padding: 7px 10px;
+  transition: border-color var(--dur-short) var(--ease-out);
+}
+
+input,
+textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-ink-3);
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--color-ink-3);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+select {
+  cursor: pointer;
+}
+
+/* ---- кнопки ---- */
+button {
+  font: inherit;
+  color: var(--color-ink);
+  background: var(--color-paper-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 7px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-short) var(--ease-out),
+    color var(--dur-short) var(--ease-out);
+}
+
+button:hover:not(:disabled) {
+  background: var(--color-paper-3);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  color: var(--color-ink-3);
+  cursor: default;
+}
+
+button.danger {
+  color: var(--color-live);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+/* ---- строки и списки ---- */
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+
+.field > span:first-child {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-4);
+}
+
+dt {
+  color: var(--color-ink-3);
+}
+
+dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- плашки ---- */
+.banner {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-panel);
+  font-size: var(--text-sm);
+}
+
+.banner.warn {
+  background: var(--color-warn-soft);
+  color: var(--color-warn);
+}
+
+.banner.err {
+  background: var(--color-live-soft);
+  color: var(--color-live);
+}
+
+.banner.inline {
+  margin-top: var(--space-3);
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--color-ink-3);
+  text-underline-offset: 3px;
+}
+
+button.link:hover:not(:disabled) {
+  background: none;
+  color: var(--color-ink);
+}
