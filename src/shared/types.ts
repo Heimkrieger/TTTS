@@ -115,6 +115,8 @@ export interface QueueSnapshot {
   paused: boolean
   /** Почему на паузе (для подписи "На паузе: ..."), null - не на паузе. */
   pauseReason: string | null
+  /** Пауза из-за ошибки (ключ, деньги, голос, OBS), а не по кнопке "Пауза". */
+  pausedByError: boolean
   /**
    * Сервис озвучки временно не отвечает: сообщения ждут в очереди, программа сама пробует
    * снова. Текст для подписи под очередью, null - всё в порядке.
@@ -200,6 +202,11 @@ export interface FishStatus {
   balance: string | null
   /** Последняя ошибка Fish (ключ, деньги, связь), null - всё хорошо. */
   error: string | null
+  /**
+   * Проверен ли ключ запросом к Fish: works - принят, rejected - Fish его не принял,
+   * unknown - ещё не проверяли или проверить не удалось (нет связи).
+   */
+  keyCheck: 'unknown' | 'works' | 'rejected'
   stats: TtsStats
   budget: BudgetStatus
 }

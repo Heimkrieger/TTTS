@@ -108,7 +108,14 @@ export function PlayerBar(props: {
         </select>
         <IconButton
           icon="play"
-          title={testError ?? (testing ? 'Готовлю...' : 'Проверить голос')}
+          title={
+            testError ??
+            (props.fish.key === 'none'
+              ? 'Проверка голоса: нужен ключ Fish Audio (раздел "Подключение")'
+              : testing
+                ? 'Готовлю...'
+                : 'Проверить голос')
+          }
           danger={testError !== null}
           disabled={testing || props.fish.key === 'none'}
           onClick={() => {
@@ -141,7 +148,7 @@ export function PlayerBar(props: {
         min={0}
         max={200}
         step={5}
-        format={(v) => `${v} %`}
+        format={(v) => (v === 0 ? '0 % (звук выключен)' : `${v} %`)}
         onCommit={(v) => props.set({ tts: { volume: v } })}
       />
 

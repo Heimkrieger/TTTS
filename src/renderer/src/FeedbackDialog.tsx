@@ -74,7 +74,13 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }): React.JSX.
   const empty = draft.text.trim().length < 5
 
   return (
-    <div className="modal-back" onMouseDown={onClose}>
+    <div
+      className="modal-back"
+      onMouseDown={() => {
+        // Клик мимо окна закрывает его, только пока ничего не набрано.
+        if (draft.text.trim() === '') onClose()
+      }}
+    >
       <div
         className="modal feedback"
         role="dialog"

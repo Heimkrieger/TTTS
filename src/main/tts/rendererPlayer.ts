@@ -11,18 +11,29 @@ export interface PlayerBridge {
 const NO_ANSWER =
   'Сообщение доиграло не как обычно (окно не ответило), программа перешла к следующему. Если повторяется, проверьте устройство в разделе "Звук".'
 
+/** Столько сообщений подряд без ответа окна - звук явно не играет: очередь встаёт на паузу. */
+export const MISSES_TO_PAUSE = 2
+
+/** Окно программы не отвечает: очередь видит fatal и встаёт на паузу, сообщение не теряется. */
+export class WindowSilentError extends Error {
+  readonly fatal = true
+}
+
 let seq = 0
 
 export class RendererPlayer implements Player {
   private waiting: {
     id: number
     resolve: (r: 'ended' | 'stopped') => void
+    reject: (e: Error) => void
     timer: ReturnType<typeof setTimeout> | null
     /** Когда сработает страховка (мс) и сколько оставалось на момент паузы. */
     deadline: number
     leftMs: number
   } | null = null
   private paused = false
+  /** Сколько сообщений подряд окно не подтвердило. */
+  private misses = 0
 
   constructor(
     private readonly bridge: PlayerBridge,
@@ -50,7 +61,7 @@ export class RendererPlayer implements Player {
         return
       }
       const limit = (Math.min(item.durationSec, item.trimSec ?? Infinity) + 10) * 1000
-      this.waiting = { id, resolve, timer: null, deadline: 0, leftMs: limit }
+      this.waiting = { id, resolve, reject, timer: null, deadline: 0, leftMs: limit }
       this.arm()
     })
   }
@@ -60,13 +71,34 @@ export class RendererPlayer implements Player {
     if (!w) return
     w.deadline = Date.now() + w.leftMs
     w.timer = setTimeout(() => {
+      if (++this.misses >= MISSES_TO_PAUSE) {
+        // Второе сообщение подряд без ответа: окно зависло или упало. Не делаем вид, что звучит.
+        this.misses = 0
+        if (this.waiting === w) this.waiting = null
+        w.reject(
+          new WindowSilentError(
+            'окно программы не отвечает, звук не проигрывается. Закройте программу и откройте снова'
+          )
+        )
+        return
+      }
       this.onWarn(NO_ANSWER)
-      this.finish(w.id, 'ended')
+      this.settle(w.id, 'ended')
     }, w.leftMs)
   }
 
   /** Сигнал из окна: доиграло или остановлено. */
   finish(id: number, result: 'ended' | 'stopped'): void {
+    this.misses = 0
+    this.settle(id, result)
+  }
+
+  /** Окно перезапущено после сбоя: звук, который в нём играл, оборван. */
+  windowLost(): void {
+    if (this.waiting) this.settle(this.waiting.id, 'stopped')
+  }
+
+  private settle(id: number, result: 'ended' | 'stopped'): void {
     const w = this.waiting
     if (!w || w.id !== id) return
     if (w.timer) clearTimeout(w.timer)
@@ -80,7 +112,7 @@ export class RendererPlayer implements Player {
     this.bridge.send('stop', { id: w.id, fadeMs })
     // На паузе звук в окне заморожен и сигнал "остановлено" не придёт: завершаем сами,
     // иначе пропуск, очистка и удаление модератором не работали бы до "Продолжить".
-    if (this.paused) this.finish(w.id, 'stopped')
+    if (this.paused) this.settle(w.id, 'stopped')
   }
 
   pause(): void {

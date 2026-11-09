@@ -13,7 +13,8 @@ function subscribe<T extends unknown[]>(channel: string, cb: (...args: T) => voi
 const api: TtsApi = {
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo),
-    openDataDir: () => ipcRenderer.invoke(IPC.appOpenDataDir)
+    openDataDir: () => ipcRenderer.invoke(IPC.appOpenDataDir),
+    reloadWindow: () => ipcRenderer.invoke(IPC.appReloadWindow)
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),

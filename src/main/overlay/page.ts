@@ -50,6 +50,8 @@ body { font-family: 'Golos Text', 'Segoe UI', sans-serif; }
   var hint = document.getElementById('hint');
   var showText = true, hideTimer = null;
   var ctx = null, master = null, cur = null, volume = 1, ws = null;
+  // Пропуск пришёл, пока звук ещё готовился: остановим сразу после запуска.
+  var pendingStop = {}, pendingCount = 0;
 
   function audio() {
     if (!ctx) { ctx = new AudioContext(); master = ctx.createGain(); master.connect(ctx.destination); }
@@ -70,6 +72,7 @@ body { font-family: 'Golos Text', 'Segoe UI', sans-serif; }
   function play(m) {
     var c = audio();
     var go = function () {
+      hint.style.display = 'none';
       c.decodeAudioData(b64(m.audio)).then(function (buf) {
         setVol(m.volume);
         var src = c.createBufferSource(), fade = c.createGain();
@@ -83,15 +86,24 @@ body { font-family: 'Golos Text', 'Segoe UI', sans-serif; }
           fade.gain.linearRampToValueAtTime(0, t + m.trimSec);
           src.start(t, 0, m.trimSec);
         } else src.start(t);
+        if (pendingStop[m.id]) { delete pendingStop[m.id]; me.stopped = true; src.stop(); }
       }).catch(function (e) { send({ type: 'ended', id: m.id, result: 'stopped', error: String(e) }); });
     };
     if (c.state === 'suspended') {
       c.resume().then(go);
-      if (c.state === 'suspended') hint.style.display = 'block';
+      // Подсказка нужна только обычному браузеру, который ждёт клика. Показываем её, если звук
+      // так и не включился: сразу после resume() состояние ещё "приостановлен" у всех.
+      setTimeout(function () { if (c.state === 'suspended') hint.style.display = 'block'; }, 1500);
     } else go();
   }
   function stop(m) {
-    if (!cur || (m.id && cur.id !== m.id)) return;
+    if (!cur || (m.id && cur.id !== m.id)) {
+      if (m.id) {
+        if (++pendingCount > 50) { pendingStop = {}; pendingCount = 1; }
+        pendingStop[m.id] = true;
+      }
+      return;
+    }
     cur.stopped = true;
     var t = ctx.currentTime, g = cur.fade.gain;
     g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(0, t + m.fadeMs / 1000);

@@ -5,6 +5,7 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { artLines } from '@shared/art'
 import type { FeedEntry, FeedStatus } from '@shared/types'
 import { ChatBadges, Nick, ReplyLine } from './badges'
+import { useConfirm } from './confirm'
 import { BusyRing, IconButton, MuteButton, hhmm } from './ui'
 
 /** Подпись статуса справа от ника. Для обычных сообщений чата подписи нет. */
@@ -39,12 +40,14 @@ const FeedRow = memo(function FeedRow({
   e,
   error,
   onSpeak,
+  onBlacklist,
   rewardMarked,
   onToggleReward
 }: {
   e: FeedEntry
   error: string | undefined
   onSpeak: (id: string) => void
+  onBlacklist: (login: string) => void
   /** Награда этого сообщения отмечена для озвучки (если сообщение - награда). */
   rewardMarked: boolean
   onToggleReward: (rewardId: string) => void
@@ -96,7 +99,7 @@ const FeedRow = memo(function FeedRow({
               icon="ban"
               title={`В чёрный список: ${e.message.user}`}
               danger
-              onClick={() => void window.api.actions.blacklist(e.message.user, true)}
+              onClick={() => onBlacklist(e.message.user)}
             />
           </span>
           {st && (
@@ -172,6 +175,22 @@ export function Feed(props: {
     })
   }, [])
 
+  // Чёрный список - насовсем, а кнопка стоит рядом с мьютом: спрашиваем, чтобы не попасть мимо.
+  const confirm = useConfirm()
+  const blacklist = useCallback(
+    (login: string): void => {
+      void confirm({
+        title: `Добавить ${login} в чёрный список?`,
+        text: 'Его сообщения перестанут озвучиваться, пока вы не уберёте его из списка в разделе "Мьюты и ЧС".',
+        confirmText: 'В чёрный список',
+        danger: true
+      }).then((ok) => {
+        if (ok) void window.api.actions.blacklist(login, true)
+      })
+    },
+    [confirm]
+  )
+
   return (
     <section className="col">
       <header className="col-head">
@@ -236,6 +255,7 @@ export function Feed(props: {
               e={e}
               error={errors[e.message.id]}
               onSpeak={speak}
+              onBlacklist={blacklist}
               rewardMarked={
                 e.message.rewardId !== null &&
                 props.trigger !== 'prefix' &&

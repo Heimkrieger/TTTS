@@ -31,34 +31,38 @@ export function VoicePanel(props: {
   const [link, setLink] = useState('')
   const [phrase, setPhrase] = useState('[laughing] Привет, чат. Это проверка голоса.')
   const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Ошибка показывается рядом с тем действием, которое не получилось, а не внизу страницы.
+  type Where = 'listen' | 'add' | 'test' | 'search'
+  const [errors, setErrors] = useState<Partial<Record<Where, string | null>>>({})
+  const fail = (where: Where, text: string | null): void =>
+    setErrors((p) => ({ ...p, [where]: text }))
   /** Какой готовый голос сейчас готовится или звучит (кнопка "Послушать"). */
   const [listening, setListening] = useState<string | null>(null)
   const listen = (id: string): void => {
     setListening(id)
-    setError(null)
+    fail('listen', null)
     void playTest('Привет, чат. Так звучит этот голос.', { voiceId: id }).then((err) => {
       setListening(null)
-      if (err) setError(err)
+      fail('listen', err)
     })
   }
   const noKey = fish.key === 'none' || fish.key === 'unreadable'
 
   const search = (): void => {
     setBusy('search')
-    setError(null)
+    fail('search', null)
     void window.api.fish.searchVoices(query, lang || null).then((r) => {
       setBusy(null)
       if (r.ok) setFound(r.value)
-      else setError(r.error)
+      else fail('search', r.error)
     })
   }
   const test = (): void => {
     setBusy('test')
-    setError(null)
+    fail('test', null)
     void playTest(phrase).then((err) => {
       setBusy(null)
-      setError(err)
+      fail('test', err)
     })
   }
 
@@ -157,6 +161,7 @@ export function VoicePanel(props: {
             </div>
           )
         })}
+        {errors.listen && <div className="banner err inline">{errors.listen}</div>}
       </section>
 
       <section className="group">
@@ -197,13 +202,14 @@ export function VoicePanel(props: {
               void window.api.fish.addVoice(link).then((r) => {
                 setBusy(null)
                 if (r.ok) setLink('')
-                setError(r.ok ? null : r.error)
+                fail('add', r.ok ? null : r.error)
               })
             }}
           >
             Добавить
           </button>
         </div>
+        {errors.add && <div className="banner err inline">{errors.add}</div>}
       </section>
 
       <section className="group">
@@ -219,6 +225,7 @@ export function VoicePanel(props: {
             {busy === 'test' ? 'Готовлю...' : 'Проверить'}
           </button>
         </div>
+        {errors.test && <div className="banner err inline">{errors.test}</div>}
         <p className="muted small">
           Фраза звучит сразу, без очереди, текущим голосом и моделью. На платной модели проверка
           стоит денег.{' '}
@@ -251,6 +258,7 @@ export function VoicePanel(props: {
             {busy === 'search' ? 'Ищу...' : 'Найти'}
           </button>
         </div>
+        {errors.search && <div className="banner err inline">{errors.search}</div>}
         {found && found.length === 0 && (
           <p className="muted">Ничего не нашлось. Попробуйте другое слово или включите "все".</p>
         )}
@@ -323,8 +331,6 @@ export function VoicePanel(props: {
           onChange={(v) => set({ tts: { tags: { blockedWords: v } } })}
         />
       </section>
-
-      {error && <div className="banner err inline">{error}</div>}
     </div>
   )
 }

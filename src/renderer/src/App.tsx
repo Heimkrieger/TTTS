@@ -25,7 +25,6 @@ import { SoundPanel } from './SoundPanel'
 import { AudioPanel } from './AudioPanel'
 import { VoicePanel } from './VoicePanel'
 import { HelpPanel } from './HelpPanel'
-import { startPlayerBridge } from './playerBridge'
 import { configure as configureAudio } from './audio'
 import { TestPanel } from './TestPanel'
 import { Icon, type IconName } from './ui'
@@ -135,6 +134,7 @@ const EMPTY_QUEUE: QueueSnapshot = {
   history: [],
   paused: false,
   pauseReason: null,
+  pausedByError: false,
   stalled: null,
   silent: true
 }
@@ -153,8 +153,6 @@ export function App(): React.JSX.Element {
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [update, setUpdate] = useState<UpdateStatus | null>(null)
 
-  // Звук: очередь в main присылает команды проигрывания.
-  useEffect(() => startPlayerBridge(), [])
   // Устройство вывода, монитор, компрессор - при запуске и при каждом изменении.
   const audioKey = settings ? JSON.stringify(settings.audio) : ''
   useEffect(() => {
@@ -197,7 +195,10 @@ export function App(): React.JSX.Element {
   }, [])
 
   const set = (patch: SettingsPatch): void => {
-    void window.api.settings.set(patch).then((r) => setError(r.ok ? null : r.error))
+    void window.api.settings.set(patch).then(
+      (r) => setError(r.ok ? null : r.error),
+      () => setError('программа не ответила. Попробуйте ещё раз; если повторится, перезапустите её')
+    )
   }
 
   if (!info || !settings || !status || !fish) return <div className="loading">Загрузка...</div>
@@ -310,6 +311,29 @@ export function App(): React.JSX.Element {
             </div>
           )}
           {error && <div className="banner err">Настройка не сохранена: {error}</div>}
+          {(fish.key === 'none' || fish.key === 'unreadable') && view !== 'connection' && (
+            <div className="banner warn">
+              {fish.key === 'unreadable'
+                ? 'Сохранённый ключ Fish Audio не читается на этом компьютере, поэтому очередь идёт без звука.'
+                : 'Нет ключа Fish Audio, поэтому очередь идёт без звука.'}{' '}
+              <button className="link" onClick={() => setView('connection')}>
+                Добавить ключ
+              </button>
+            </div>
+          )}
+          {queue.pausedByError && (
+            <div className="banner err">
+              Озвучка остановилась: {queue.pauseReason}{' '}
+              <button className="link" onClick={() => void window.api.queue.resume()}>
+                Продолжить
+              </button>
+            </div>
+          )}
+          {queue.stalled && (
+            <div className="banner warn">
+              Озвучка ждёт: {queue.stalled}. Сообщения не теряются, программа пробует снова сама.
+            </div>
+          )}
         </div>
 
         {view === 'main' && (

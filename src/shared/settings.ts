@@ -320,7 +320,9 @@ export const settingsSchema = z.object({
   /** Состояние интерфейса. wizardDone - мастер первого запуска пройден или закрыт. */
   ui: z
     .object({
-      wizardDone: z.boolean().default(false)
+      wizardDone: z.boolean().default(false),
+      /** Системный звук Windows, когда озвучка остановилась из-за ошибки или пропал чат. */
+      alertSound: z.boolean().default(true)
     })
     .prefault({}),
   /** Мьюты зрителей (меняются отдельными командами, не через patch). */

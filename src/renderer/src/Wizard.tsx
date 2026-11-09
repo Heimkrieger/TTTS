@@ -27,7 +27,8 @@ export function Wizard(props: {
   const spoken = feed.some((e) => e.status === 'speaking' || e.status === 'spoken')
 
   const voice = s.tts.voices.find((v) => v.id === s.tts.voiceId)?.title ?? null
-  const ready = [status.state === 'connected', hasKey, spoken][step] ?? false
+  const keyBad = fish.keyCheck === 'rejected'
+  const ready = [status.state === 'connected', hasKey && !keyBad, spoken][step] ?? false
   const last = step === STEPS.length - 1
 
   return (

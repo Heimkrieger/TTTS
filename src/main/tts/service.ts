@@ -11,6 +11,7 @@ export const BALANCE_EVERY_MS = 5 * 60_000
 export class FishService extends EventEmitter<{ status: [FishStatus] }> {
   private balance: string | null = null
   private error: string | null = null
+  private keyCheck: FishStatus['keyCheck'] = 'unknown'
   private timer: ReturnType<typeof setInterval> | null = null
 
   constructor(
@@ -40,6 +41,7 @@ export class FishService extends EventEmitter<{ status: [FishStatus] }> {
       key: own === 'ok' ? 'ok' : this.envKey ? 'env' : own,
       balance: this.balance,
       error: this.error,
+      keyCheck: this.keyCheck,
       stats: this.provider.stats,
       budget: this.provider.budgetStatus()
     }
@@ -69,14 +71,17 @@ export class FishService extends EventEmitter<{ status: [FishStatus] }> {
     if (!this.getKey()) {
       this.balance = null
       this.error = null
+      this.keyCheck = 'unknown'
       this.emitStatus()
       return
     }
     try {
       this.balance = await this.client.balance()
       this.error = null
+      this.keyCheck = 'works'
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
+      if (e instanceof FishFatalError) this.keyCheck = 'rejected'
       if (e instanceof FishFatalError || this.error !== msg)
         this.journal.add('warn', `Fish: ${msg}`)
       this.error = e instanceof FishFatalError ? msg : `баланс не обновился: ${msg}`

@@ -378,6 +378,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       history: this.history.slice(0, SNAPSHOT_HISTORY).map(view),
       paused: this.paused,
       pauseReason: this.paused ? this.pauseReason : null,
+      pausedByError: this.paused && this.fatalPause,
       stalled: this.stallReason,
       silent: this.silent
     }
@@ -603,7 +604,8 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       )
     }
     this.current = null
-    if (result === 'ended') this.finish(item, 'done', null)
+    // Без ключа Fish очередь идёт без звука: не пишем просто "прозвучало".
+    if (result === 'ended') this.finish(item, 'done', item.audio === null ? 'без звука' : null)
     else this.finish(item, 'skipped', item.reason ?? 'остановлено')
     this.changed()
     // Пауза между сообщениями.

@@ -40,6 +40,8 @@ export interface TtsApi {
   app: {
     info(): Promise<AppInfo>
     openDataDir(): Promise<void>
+    /** Перезагрузить окно программы (после ошибки интерфейса). */
+    reloadWindow(): Promise<void>
   }
   settings: {
     get(): Promise<PublicSettings>
@@ -152,6 +154,7 @@ export interface TtsApi {
 export const IPC = {
   appInfo: 'app:info',
   appOpenDataDir: 'app:open-data-dir',
+  appReloadWindow: 'app:reload-window',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   settingsChanged: 'settings:changed',

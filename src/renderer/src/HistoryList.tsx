@@ -58,7 +58,7 @@ export function HistoryList({ latestId }: { latestId: string | null }): React.JS
               {st && (
                 <span className={`st ${st[1]}`} title={it.reason ?? undefined}>
                   {st[0]}
-                  {it.reason && it.status !== 'done' ? `: ${it.reason}` : ''}
+                  {it.reason ? `: ${it.reason}` : ''}
                 </span>
               )}
               <div className="txt">{it.text}</div>

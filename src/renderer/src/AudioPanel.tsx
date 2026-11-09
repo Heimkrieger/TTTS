@@ -317,6 +317,12 @@ export function AudioPanel({
                   set({ audio: { monitor: { deviceId: d.deviceId, deviceLabel: d.label } } })
                 }
               />
+              {(a.monitor.deviceId || '') === (a.deviceId || '') && (
+                <div className="banner warn inline">
+                  Выбрано то же устройство, что и для основного звука: озвучка будет звучать дважды.
+                  Выберите другое устройство или выключите дублирование.
+                </div>
+              )}
               <NumberField
                 label="Громкость в наушниках"
                 value={a.monitor.volume}
@@ -329,6 +335,16 @@ export function AudioPanel({
           )}
         </section>
       )}
+
+      <section className="group">
+        <h3>Если озвучка остановилась</h3>
+        <Toggle
+          label="Подать сигнал"
+          hint="когда озвучка встала из-за ошибки или пропал чат, значок программы на панели задач мигает красным и звучит короткий системный звук Windows. Звук слышен там же, где остальные звуки Windows"
+          value={s.ui.alertSound}
+          onChange={(v) => set({ ui: { alertSound: v } })}
+        />
+      </section>
 
       <section className="group">
         <h3>Горячие клавиши</h3>

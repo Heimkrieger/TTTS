@@ -1,7 +1,8 @@
 // Поля вкладки "Подключение": канал Twitch и ключ Fish Audio.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PublicSettings } from '@shared/settings'
-import type { ConnectionCheck } from '@shared/types'
+import type { ConnectionCheck, FishStatus } from '@shared/types'
+import { useConfirm } from './confirm'
 
 const STATE_ICON: Record<ConnectionCheck['steps'][number]['state'], string> = {
   ok: 'st-ok',
@@ -131,6 +132,23 @@ export function FishKeyGuide(): React.JSX.Element {
 export function FishKeyField({ status }: { status: PublicSettings['fishKey'] }): React.JSX.Element {
   const [key, setKey] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // Сразу после сохранения программа спрашивает у Fish баланс: так видно, принят ли ключ.
+  const [fish, setFish] = useState<FishStatus | null>(null)
+  useEffect(() => {
+    void window.api.fish.status().then(setFish)
+    return window.api.fish.onStatus(setFish)
+  }, [])
+  const confirm = useConfirm()
+  const remove = (): void => {
+    void confirm({
+      title: 'Удалить ключ Fish Audio?',
+      text: 'Озвучка останется без звука. Сайт fish.audio не показывает ключ повторно: чтобы вернуть звук, придётся создать новый ключ.',
+      confirmText: 'Удалить',
+      danger: true
+    }).then((ok) => {
+      if (ok) void window.api.secrets.clearFishKey()
+    })
+  }
 
   const save = (): void => {
     void window.api.secrets.setFishKey(key).then((res) => {
@@ -146,9 +164,34 @@ export function FishKeyField({ status }: { status: PublicSettings['fishKey'] }):
       <div className="field">
         <span>Ключ Fish Audio</span>
         <div className="row">
-          <span className="ok">Ключ добавлен</span>
-          <button onClick={() => void window.api.secrets.clearFishKey()}>Удалить ключ</button>
+          {fish?.keyCheck === 'rejected' ? (
+            <span className="err">Ключ сохранён, но Fish его не принял</span>
+          ) : fish?.keyCheck === 'works' ? (
+            <span className="ok">
+              Ключ работает
+              {fish.balance !== null && Number.isFinite(Number(fish.balance))
+                ? `, баланс $${Number(fish.balance).toFixed(2)}`
+                : ''}
+            </span>
+          ) : (
+            <span className="ok">Ключ добавлен</span>
+          )}
+          <button onClick={remove}>Удалить ключ</button>
         </div>
+        {fish?.keyCheck === 'rejected' && fish.error && (
+          <small className="err">
+            {fish.error} Удалите этот ключ и вставьте новый: как его получить, написано в поле ввода
+            ключа.
+          </small>
+        )}
+        {fish?.keyCheck === 'unknown' && fish.error && (
+          <small className="muted">Проверить ключ пока не удалось: {fish.error}</small>
+        )}
+        {fish?.keyCheck === 'works' && (
+          <small className="muted">
+            Баланс нужен только для платных моделей. Бесплатная модель работает и при $0.00.
+          </small>
+        )}
       </div>
     )
   }

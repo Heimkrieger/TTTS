@@ -10,8 +10,11 @@ import { captionText } from './filters/pipeline'
 import {
   app,
   BrowserWindow,
+  dialog,
   globalShortcut,
   ipcMain,
+  Menu,
+  Notification,
   safeStorage,
   session,
   shell,
@@ -103,6 +106,10 @@ const safeStorageEncryptor: Encryptor = {
 }
 
 let mainWindow: BrowserWindow | null = null
+/** Окно упало и перезапущено: сообщить в журнал и оборвать звук, который в нём играл. */
+let onWindowCrash: (reason: string) => void = () => {}
+/** Времена последних падений окна: защита от бесконечной перезагрузки. */
+const crashTimes: number[] = []
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -142,9 +149,40 @@ function createWindow(): BrowserWindow {
   // чужая страница получила бы доступ к командам программы.
   win.webContents.on('will-navigate', (e) => e.preventDefault())
   win.webContents.on('will-redirect', (e) => e.preventDefault())
-  win.webContents.on('render-process-gone', (_e, details) =>
+  // Окно упало (память, видеодрайвер): звук играет в нём, поэтому перезапускаем его сами.
+  // Больше трёх падений за минуту - не перезапускаем, чтобы не крутиться по кругу.
+  win.webContents.on('render-process-gone', (_e, details) => {
     log.error('renderer упал', details.reason, details.exitCode)
-  )
+    if (details.reason === 'clean-exit' || win.isDestroyed()) return
+    const now = Date.now()
+    crashTimes.push(now)
+    while (crashTimes.length && now - (crashTimes[0] ?? 0) > 60_000) crashTimes.shift()
+    onWindowCrash(details.reason)
+    if (crashTimes.length <= 3)
+      setTimeout(() => {
+        if (!win.isDestroyed()) win.webContents.reload()
+      }, 500)
+  })
+  win.on('unresponsive', () => log.warn('окно программы не отвечает'))
+  win.on('responsive', () => log.info('окно программы снова отвечает'))
+  // Своё управление клавишами вместо стандартного меню (оно убрано, см. Menu.setApplicationMenu):
+  // масштаб Ctrl +, Ctrl -, Ctrl 0. Инструменты разработчика - только при разработке.
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || !input.control || input.alt) return
+    const wc = win.webContents
+    if (input.key === '=' || input.key === '+')
+      wc.setZoomLevel(Math.min(wc.getZoomLevel() + 0.5, 3))
+    else if (input.key === '-') wc.setZoomLevel(Math.max(wc.getZoomLevel() - 0.5, -2))
+    else if (input.key === '0') wc.setZoomLevel(0)
+    else if (!app.isPackaged && input.shift && input.key.toLowerCase() === 'i') wc.toggleDevTools()
+    else return
+    e.preventDefault()
+  })
+  // Значок перестаёт мигать, когда окно открыли.
+  win.on('focus', () => {
+    win.flashFrame(false)
+    win.setProgressBar(-1)
+  })
   win.webContents.on('console-message', (event) => {
     if (event.level === 'error') log.error('renderer console:', event.message)
   })
@@ -265,6 +303,11 @@ function registerIpc({
   handle(IPC.appOpenDataDir, async () => {
     const err = await shell.openPath(dataDir.dir)
     if (err) log.error('не открылась папка данных', err)
+  })
+
+  handle(IPC.appReloadWindow, () => {
+    log.warn('окно перезагружено по кнопке после ошибки интерфейса')
+    mainWindow?.webContents.reload()
   })
 
   handle(IPC.settingsGet, () => store.getPublic())
@@ -465,6 +508,11 @@ app.on('second-instance', () => {
 })
 
 void app.whenReady().then(() => {
+  // Стандартное меню Electron убираем: из-за него Ctrl+W закрывал программу, Ctrl+R перезагружал
+  // окно посреди озвучки, а Alt показывал английское меню.
+  Menu.setApplicationMenu(null)
+  // Имя программы для уведомлений Windows.
+  app.setAppUserModelId('ru.ttsapp.desktop')
   // Список устройств вывода с именами (для выбора VB-Cable и т.п.): разрешаем окну программы
   // смотреть устройства и выбирать выход звука. Камера и микрофон при этом не включаются.
   // Плюс запись в буфер обмена (кнопка "Скопировать" у шпаргалки в справке).
@@ -557,6 +605,33 @@ void app.whenReady().then(() => {
   queue.on('fatal', (e) => {
     if (e instanceof FishFatalError || e instanceof FishPauseError) fish.setError(e.message)
   })
+  // Стример обычно в игре и окна не видит: когда озвучка остановилась, даём знать снаружи окна.
+  // Значок на панели задач мигает и краснеет, по желанию - короткий системный звук.
+  const attention = (title: string, text: string): void => {
+    if (TEST_INSTANCE) return
+    const w = mainWindow
+    if (w && !w.isDestroyed() && !w.isFocused()) {
+      w.flashFrame(true)
+      w.setProgressBar(1, { mode: 'error' })
+    }
+    if (store.current().ui.alertSound) shell.beep()
+    // Уведомление Windows показывается не на всех компьютерах (нужен ярлык программы), поэтому
+    // оно только в дополнение к значку и звуку.
+    if (Notification.isSupported()) new Notification({ title, body: text, silent: true }).show()
+  }
+  queue.on('fatal', (e) =>
+    attention('Озвучка остановилась', e instanceof Error ? e.message : String(e))
+  )
+  onWindowCrash = (reason) => {
+    player.windowLost()
+    journal.add(
+      'error',
+      crashTimes.length <= 3
+        ? 'Окно программы перезапущено после сбоя. Сообщение, которое звучало, оборвано, очередь идёт дальше.'
+        : 'Окно программы падает раз за разом. Закройте программу и откройте снова; если повторится, отправьте отчёт через "Сообщить о проблеме".'
+    )
+    log.error(`окно перезапущено после сбоя: ${reason}`)
+  }
   // "Продолжить": прежняя ошибка снимается, баланс проверяется заново.
   queue.on('resumed', () => {
     fish.setError(null)
@@ -571,6 +646,22 @@ void app.whenReady().then(() => {
     journal,
     log
   )
+  // Чат пропал и не вернулся за 30 с: тоже даём знать (короткие обрывы лечатся сами).
+  let chatLostTimer: ReturnType<typeof setTimeout> | null = null
+  chat.on('status', (s) => {
+    const lost = s.state === 'reconnecting' || s.state === 'error'
+    if (!lost) {
+      if (chatLostTimer) clearTimeout(chatLostTimer)
+      chatLostTimer = null
+      return
+    }
+    chatLostTimer ??= setTimeout(() => {
+      chatLostTimer = null
+      const now = chat.chat.status
+      if (now.state === 'reconnecting' || now.state === 'error')
+        attention('Нет связи с чатом Twitch', now.detail ?? 'Программа пробует подключиться снова.')
+    }, 30_000)
+  })
   // Проверка нагрузки: TTS_FAKE_CHAT=10 - фейковые сообщения в секунду (только разработка).
   const fakeRate = Number(process.env.TTS_FAKE_CHAT)
   if (!app.isPackaged && fakeRate > 0) {
@@ -705,10 +796,38 @@ void app.whenReady().then(() => {
     return s
   })
 
-  mainWindow = createWindow()
-  mainWindow.on('closed', () => (mainWindow = null))
+  const win = createWindow()
+  mainWindow = win
+  win.on('closed', () => (mainWindow = null))
+  // Закрытие окна завершает программу. Если в очереди что-то есть, сначала спрашиваем:
+  // случайный крестик посреди стрима не должен молча выключать озвучку.
+  let quitting = false
+  win.on('close', (e) => {
+    if (quitting || TEST_INSTANCE) return
+    const s = queue.snapshot()
+    const n = s.items.length + (s.current ? 1 : 0)
+    if (n === 0) return
+    e.preventDefault()
+    void dialog
+      .showMessageBox(win, {
+        type: 'question',
+        buttons: ['Закрыть программу', 'Отмена'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        title: app.getName(),
+        message: 'Закрыть программу?',
+        detail: `Сообщений в очереди: ${n}. Они не прозвучат, озвучка чата остановится.`
+      })
+      .then((r) => {
+        if (r.response !== 0) return
+        quitting = true
+        win.close()
+      })
+  })
   chat.applySettings()
   app.on('before-quit', () => {
+    quitting = true
     cache.flush()
     queue.stop()
     hotkeys.stop()
