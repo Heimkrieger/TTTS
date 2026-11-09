@@ -55,21 +55,14 @@ export function Wizard(props: {
 
         {step === 1 && (
           <div className="wizard-body">
-            <p>
-              Голос делает сервис Fish Audio, ему нужен ваш ключ. Ключ берётся бесплатно: войдите на{' '}
-              <a href="https://fish.audio/app/api-keys/" target="_blank" rel="noreferrer">
-                fish.audio, страница API Keys
-              </a>
-              , нажмите "Create", скопируйте ключ и вставьте сюда.
-            </p>
+            <p>Голос делает сервис Fish Audio, ему нужен ваш ключ.</p>
             {fish.key === 'env' ? (
               <p className="ok">Ключ уже задан (режим разработки).</p>
             ) : (
               <FishKeyField status={s.fishKey} />
             )}
             <p className="muted small">
-              Ключ хранится только на этом компьютере в зашифрованном виде. Сначала стоит бесплатная
-              модель голоса (s2.1-pro-free), она денег не тратит.
+              Ключ хранится только на этом компьютере в зашифрованном виде.
             </p>
           </div>
         )}

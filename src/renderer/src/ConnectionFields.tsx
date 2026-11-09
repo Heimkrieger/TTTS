@@ -94,6 +94,40 @@ export function ChannelField({ value }: { value: string }): React.JSX.Element {
   )
 }
 
+/** Адрес страницы ключей Fish Audio. */
+export const FISH_KEYS_URL = 'https://fish.audio/app/api-keys/'
+
+/** Как получить бесплатный ключ: по шагам, кнопки названы как на сайте fish.audio. */
+export function FishKeyGuide(): React.JSX.Element {
+  return (
+    <>
+      <ol className="steps">
+        <li>
+          Откройте{' '}
+          <a href={FISH_KEYS_URL} target="_blank" rel="noreferrer">
+            страницу ключей на fish.audio
+          </a>
+          .
+        </li>
+        <li>
+          Нажмите "Вход / Регистрация" справа вверху. Войти можно через Google, GitHub, Apple или по
+          почте. Карта не нужна.
+        </li>
+        <li>Нажмите "Создать ключ API". Название ключа любое, например TTS.</li>
+        <li>
+          Сразу скопируйте ключ: Fish показывает его один раз. Не успели - удалите ключ на сайте и
+          создайте новый.
+        </li>
+        <li>Вставьте ключ в поле ниже и нажмите "Сохранить ключ".</li>
+      </ol>
+      <p className="muted small">
+        Бесплатно работает модель s2.1-pro-free, в программе она стоит сразу. Если сайт спросит срок
+        действия ключа, выберите подольше: когда срок кончится, понадобится новый ключ.
+      </p>
+    </>
+  )
+}
+
 export function FishKeyField({ status }: { status: PublicSettings['fishKey'] }): React.JSX.Element {
   const [key, setKey] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -122,9 +156,8 @@ export function FishKeyField({ status }: { status: PublicSettings['fishKey'] }):
   return (
     <div className="field">
       <span>Ключ Fish Audio</span>
-      <small className="hint">
-        код из личного кабинета fish.audio (раздел API Keys), по нему Fish узнаёт ваш аккаунт
-      </small>
+      <small className="hint">по нему Fish узнаёт ваш аккаунт, ключ бесплатный</small>
+      <FishKeyGuide />
       {status === 'unreadable' && (
         <small className="err">
           Сохранённый ключ не читается на этом компьютере (папку перенесли с другого ПК или
@@ -136,7 +169,7 @@ export function FishKeyField({ status }: { status: PublicSettings['fishKey'] }):
           type="password"
           value={key}
           aria-label="Ключ Fish Audio"
-          placeholder="вставьте ключ из раздела API Keys на fish.audio"
+          placeholder="вставьте ключ с fish.audio"
           onChange={(e) => setKey(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && save()}
         />
