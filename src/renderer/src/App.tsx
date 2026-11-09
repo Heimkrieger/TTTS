@@ -378,7 +378,7 @@ export function App(): React.JSX.Element {
         )}
         {view === 'help' && (
           <div className="page-wrap">
-            <HelpPanel s={settings} />
+            <HelpPanel s={settings} go={setView} />
           </div>
         )}
         {view === 'voice' && (

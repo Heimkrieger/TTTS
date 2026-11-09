@@ -79,8 +79,19 @@ export class OverlayServer extends EventEmitter<OverlayEvents> {
     )
   }
 
+  /** Запуски идут строго по одному: два одновременных заняли бы порт друг у друга. */
+  private starting: Promise<void> = Promise.resolve()
+
   /** Запустить (или перезапустить на другом порту). */
-  async start(port: number): Promise<void> {
+  start(port: number): Promise<void> {
+    this.starting = this.starting.then(
+      () => this.startNow(port),
+      () => this.startNow(port)
+    )
+    return this.starting
+  }
+
+  private async startNow(port: number): Promise<void> {
     if (this.http && this.port === port && !this.error) return
     await this.stop()
     this.port = port

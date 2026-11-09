@@ -2,6 +2,7 @@
 // Фильтры применяются по порядку, остановка на первом отказе.
 // Каждый фильтр - чистая функция; состояние (кулдауны, недавние тексты) обновляется только
 // когда сообщение прошло ВСЕ фильтры (commit), чтобы отказ по длине не запускал кулдаун.
+import { Script, createContext } from 'node:vm'
 import type { RolesSettings, Settings } from '@shared/settings'
 import type { Badge, ChatMessage } from '@shared/types'
 import { isRiskyRegex } from '@shared/regexSafety'
@@ -207,14 +208,48 @@ function stopWordRegex(w: string): RegExp | null {
     return null
   }
 }
+/**
+ * Выражение, которое написал стример (/шаблон/), выполняется с лимитом времени. Неудачное
+ * выражение на длинном сообщении могло бы считаться минутами и подвесить всю программу;
+ * проверка "опасных" шаблонов при сохранении ловит не всё.
+ */
+export const REGEX_BUDGET_MS = 50
+const box = createContext({ re: /x/, text: '', beep: '' }) as {
+  re: RegExp
+  text: string
+  beep: string
+}
+const RUN_TEST = new Script('re.lastIndex = 0; re.test(text)')
+const RUN_REPLACE = new Script('re.lastIndex = 0; text.replace(re, beep)')
+/** null - выражение не уложилось в лимит. */
+function guarded<T>(script: Script, re: RegExp, text: string): T | null {
+  box.re = re
+  box.text = text
+  box.beep = BEEP
+  try {
+    return script.runInContext(box, { timeout: REGEX_BUDGET_MS }) as T
+  } catch {
+    return null
+  }
+}
+
 const stopWordsStep: Step = (text, _m, s) => {
   let out = text
   for (const w of s.filters.stopWords.list) {
     const re = stopWordRegex(w)
-    if (!re || !re.test(out)) continue
+    if (!re) continue
+    const own = /^\/.+\/[a-z]*$/.test(w)
+    const hit = own ? guarded<boolean>(RUN_TEST, re, out) : re.test(out)
+    if (hit === null)
+      return reject(
+        `стоп-слово ${w} проверяется слишком долго, сообщение пропущено. Упростите это стоп-слово в разделе "Фильтры"`
+      )
+    if (!hit) continue
     re.lastIndex = 0
     if (s.filters.stopWords.mode === 'reject') return reject(`стоп-слово: ${w}`)
-    out = out.replace(re, BEEP)
+    const replaced = own ? guarded<string>(RUN_REPLACE, re, out) : out.replace(re, BEEP)
+    if (replaced === null) return reject(`стоп-слово ${w} проверяется слишком долго`)
+    out = replaced
   }
   return { pass: true, text: out }
 }

@@ -138,8 +138,9 @@ export class FishService extends EventEmitter<{ status: [FishStatus] }> {
    * Проверка связи с Fish по шагам: сервер, ключ, синтез. Синтез - всегда на бесплатной модели
    * и мимо кэша, чтобы измерить настоящее время и не тратить деньги.
    */
-  async checkConnection(): Promise<ConnectionCheck> {
-    const steps: CheckStep[] = []
+  async checkConnection(before: CheckStep[] = []): Promise<ConnectionCheck> {
+    // before - шаги, которые проверила основная программа (чат, очередь, звук).
+    const steps: CheckStep[] = [...before]
     const errText = (e: unknown): string => {
       if (e instanceof Error && e.name === 'TimeoutError') return 'нет ответа за 15 с'
       if (e instanceof Error && e.message === 'fetch failed')
@@ -234,11 +235,12 @@ function finish(steps: CheckStep[]): ConnectionCheck {
   const failed = steps.find((s) => s.state === 'fail')
   if (failed) {
     const hint =
-      failed.title === 'Сервер Fish Audio'
+      failed.fix ??
+      (failed.title === 'Сервер Fish Audio'
         ? 'Проверьте интернет. Если интернет есть, сервер Fish недоступен из вашей сети: попробуйте VPN.'
         : failed.title === 'Ключ'
           ? 'Добавьте или замените ключ: fish.audio, раздел API Keys.'
-          : 'Сервер и ключ в порядке, но пробная озвучка не прошла. Повторите проверку через минуту.'
+          : 'Сервер и ключ в порядке, но пробная озвучка не прошла. Повторите проверку через минуту.')
     return {
       steps,
       ok: false,
@@ -251,6 +253,6 @@ function finish(steps: CheckStep[]): ConnectionCheck {
     ok: true,
     verdict: slow
       ? 'Работает, но медленно. Следующее сообщение готовится заранее, поэтому задержку будет слышно в основном после тишины.'
-      : 'Всё работает.'
+      : 'Всё работает. Чтобы услышать голос, нажмите кнопку проверки рядом с выбором голоса внизу окна.'
   }
 }

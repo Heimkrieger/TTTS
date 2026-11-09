@@ -221,7 +221,8 @@ export const settingsSchema = z.object({
       voiceId: z.string().max(64).default(DEFAULT_VOICE.id),
       /** Избранные голоса с именами. */
       voices: z
-        .array(z.object({ id: z.string(), title: z.string() }))
+        .array(z.object({ id: z.string().max(64), title: z.string().max(200) }))
+        .max(1000)
         .default([
           { ...DEFAULT_VOICE },
           ...RECOMMENDED_VOICES.map(({ id, title }) => ({ id, title }))
@@ -326,7 +327,10 @@ export const settingsSchema = z.object({
     })
     .prefault({}),
   /** Мьюты зрителей (меняются отдельными командами, не через patch). */
-  mutes: z.array(z.object({ login: z.string(), until: z.number() })).default([]),
+  mutes: z
+    .array(z.object({ login: z.string().max(50), until: z.number() }))
+    .max(5000)
+    .default([]),
   /** Секреты хранятся только зашифрованными (base64 от safeStorage). В renderer не уходят. */
   secrets: z
     .object({

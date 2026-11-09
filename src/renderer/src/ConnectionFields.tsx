@@ -17,13 +17,13 @@ const STATE_TEXT: Record<ConnectionCheck['steps'][number]['state'], string> = {
   skip: 'пропущено'
 }
 
-/** Проверка связи с Fish: сервер, ключ, синтез - с временем каждого шага. */
+/** Проверка озвучки по шагам: чат, очередь, звук, сервер Fish, ключ, пробная озвучка. */
 export function ConnectionCheckBlock(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [res, setRes] = useState<ConnectionCheck | null>(null)
   return (
     <div className="field">
-      <span>Связь с Fish Audio</span>
+      <span>Проверка озвучки</span>
       <div className="row">
         <button
           disabled={busy}
@@ -36,9 +36,11 @@ export function ConnectionCheckBlock(): React.JSX.Element {
             })
           }}
         >
-          {busy ? 'Проверяю...' : 'Проверить связь'}
+          {busy ? 'Проверяю...' : 'Проверить всё'}
         </button>
-        <small className="muted">сервер, ключ и пробная озвучка на бесплатной модели</small>
+        <small className="muted">
+          чат, очередь, звук, сервер Fish, ключ и пробная озвучка на бесплатной модели
+        </small>
       </div>
       {res && (
         <div className={`check ${res.ok ? 'ok' : 'err'}`}>

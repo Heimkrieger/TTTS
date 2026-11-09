@@ -1,6 +1,7 @@
 // Точка входа main-процесса: папка данных, логи, настройки, окно, IPC.
 import { hostname, userInfo } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { FEEDBACK_URL, UPDATE_PUBLIC_KEY, UPDATE_REPO } from '@shared/brand'
 import { Updater } from './update/updater'
 import {
@@ -32,7 +33,7 @@ import {
 } from 'electron'
 import log from 'electron-log/main'
 import { IPC, type AppInfo } from '@shared/ipc'
-import type { Result } from '@shared/types'
+import type { CheckStep, Result } from '@shared/types'
 import { canWriteDir, resolveDataDir } from './paths'
 import { SettingsStore, type Encryptor } from './settings'
 import { ChatService } from './chat/service'
@@ -228,7 +229,15 @@ function isAllowedLink(url: string): boolean {
 function isOwnPage(frame: WebFrameMain | null): boolean {
   const url = frame?.url ?? ''
   const dev = process.env.ELECTRON_RENDERER_URL
-  return url.startsWith('file://') || (!app.isPackaged && !!dev && url.startsWith(dev))
+  if (!app.isPackaged && !!dev && url.startsWith(dev)) return true
+  // Не любой файл с диска, а именно страница программы. Сравниваем пути, а не адреса: в адресе
+  // пробелы и русские буквы папки могут быть записаны по-разному.
+  try {
+    const page = resolve(fileURLToPath(url.split(/[?#]/)[0] ?? ''))
+    return page.toLowerCase() === resolve(__dirname, '../renderer/index.html').toLowerCase()
+  } catch {
+    return false
+  }
 }
 function handle(channel: string, fn: (e: IpcMainInvokeEvent, ...args: unknown[]) => unknown): void {
   ipcMain.handle(channel, (e, ...args) => {
@@ -394,7 +403,15 @@ function registerIpc({
     return r.ok ? { ok: true, value: null } : r
   })
   handle(IPC.queueHistory, () => queue.fullHistory())
-  queue.on('update', (s) => send(IPC.evQueue, s))
+  // Очередь меняется по нескольку раз на сообщение: в окно уходит последнее состояние не чаще
+  // раза в 50 мс, а не каждое изменение.
+  let queueSend: ReturnType<typeof setTimeout> | null = null
+  queue.on('update', () => {
+    queueSend ??= setTimeout(() => {
+      queueSend = null
+      send(IPC.evQueue, queue.snapshot())
+    }, 50)
+  })
 
   // Страница для OBS.
   handle(IPC.overlayStatus, () => overlay.status())
@@ -432,7 +449,8 @@ function registerIpc({
       logFile,
       channels: [store.current().twitch.channel, ...chat.channelsSeen].filter(Boolean),
       viewers: [
-        ...chat.feed.snapshot().map((e) => e.message.user),
+        // И логин, и отображаемое имя: у ников не на латинице они разные, а в журнале - имя.
+        ...chat.feed.snapshot().flatMap((e) => [e.message.user, e.message.displayName]),
         ...store.current().mutes.map((m) => m.login),
         ...store.current().filters.blacklist
       ],
@@ -492,9 +510,63 @@ function registerIpc({
       typeof voiceId === 'string' && /^[0-9a-f]{32}$/.test(voiceId) ? voiceId : undefined
     )
   )
+  // "Проверить всё": сначала то, что видно изнутри программы (чат, очередь, звук), затем Fish.
   handle(IPC.fishCheck, async () => {
-    const r = await fish.checkConnection()
-    journal.add(r.ok ? 'info' : 'warn', `Проверка связи с Fish: ${r.verdict}`)
+    const st = chat.chat.status
+    const s = store.current()
+    const snap = queue.snapshot()
+    const ok = (title: string, detail: string): CheckStep => ({
+      title,
+      state: 'ok',
+      ms: null,
+      detail
+    })
+    const fail = (title: string, detail: string, fix: string): CheckStep => ({
+      title,
+      state: 'fail',
+      ms: null,
+      detail,
+      fix
+    })
+    const ov = overlay.status()
+    const sound =
+      s.tts.volume === 0
+        ? fail('Звук', 'громкость 0 %', 'Поднимите громкость внизу окна.')
+        : s.audio.output !== 'obs'
+          ? ok('Звук', `идёт в ${s.audio.deviceLabel || 'устройство Windows по умолчанию'}`)
+          : ov.error
+            ? fail('Звук', ov.error, 'Смените порт в разделе "Звук".')
+            : ov.clients === 0
+              ? fail(
+                  'Звук',
+                  'идёт в OBS, но OBS не подключён',
+                  'Добавьте в OBS источник "Браузер" с адресом из раздела "Звук".'
+                )
+              : ok('Звук', 'идёт в OBS, источник подключён')
+    const before: CheckStep[] = [
+      st.state === 'connected'
+        ? ok('Чат Twitch', `подключён к #${st.channel}`)
+        : st.channel
+          ? fail(
+              'Чат Twitch',
+              st.detail ?? 'не подключён',
+              'Проверьте имя канала в разделе "Подключение" и интернет.'
+            )
+          : fail('Чат Twitch', 'канал не указан', 'Укажите канал в разделе "Подключение".'),
+      s.tts.enabled
+        ? ok('Озвучка', 'включена')
+        : fail('Озвучка', 'выключена', 'Включите переключатель "Озвучка" слева внизу окна.'),
+      snap.paused
+        ? fail(
+            'Очередь',
+            `на паузе: ${snap.pauseReason ?? 'причина не указана'}`,
+            'Нажмите "Продолжить" внизу справа.'
+          )
+        : ok('Очередь', 'не на паузе'),
+      sound
+    ]
+    const r = await fish.checkConnection(before)
+    journal.add(r.ok ? 'info' : 'warn', `Проверка озвучки: ${r.verdict}`)
     return r
   })
   fish.on('status', (s) => send(IPC.evFish, s))

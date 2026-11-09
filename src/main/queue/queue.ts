@@ -124,6 +124,8 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
    */
   private deletedIds = new Set<string>()
   /** Сервис озвучки не отвечает: ждём до следующей попытки, синтез пока не запускаем. */
+  /** Плеер, в котором играет текущее сообщение (вывод звука могли сменить посреди него). */
+  private currentPlayer: Player | null = null
   private stallTimer: ReturnType<typeof setTimeout> | null = null
   private stallReason: string | null = null
   /** Сколько срывов связи подряд и сколько всего удачных синтезов. */
@@ -213,7 +215,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     if (this.paused) return
     this.paused = true
     this.pauseReason = 'вы нажали "Пауза"'
-    if (this.current) this.player.pause()
+    if (this.current) (this.currentPlayer ?? this.player).pause()
     this.emit('journal', 'info', 'Озвучка на паузе')
     this.changed()
   }
@@ -223,7 +225,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     this.paused = false
     this.pauseReason = null
     this.fatalPause = false
-    if (this.current) this.player.resume()
+    if (this.current) (this.currentPlayer ?? this.player).resume()
     this.emit('journal', 'info', 'Озвучка продолжена')
     this.emit('resumed')
     this.changed()
@@ -235,7 +237,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     const cur = this.current
     if (!cur) return
     cur.reason = reason
-    this.player.stop(SKIP_FADE_MS)
+    ;(this.currentPlayer ?? this.player).stop(SKIP_FADE_MS)
   }
 
   /** Убрать сообщение из очереди или остановить, если оно звучит. */
@@ -368,7 +370,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     if (this.holdTimer) clearTimeout(this.holdTimer)
     if (this.stallTimer) clearTimeout(this.stallTimer)
     for (const it of this.items) it.abort?.abort()
-    if (this.current) this.player.stop(0)
+    if (this.current) (this.currentPlayer ?? this.player).stop(0)
   }
 
   snapshot(): QueueSnapshot {
@@ -420,7 +422,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     this.pauseReason = msg
     if (!this.paused) {
       this.paused = true
-      if (this.current) this.player.pause()
+      if (this.current) (this.currentPlayer ?? this.player).pause()
     }
     if (!again) this.emit('journal', 'error', `Озвучка на паузе: ${msg}`)
   }
@@ -574,8 +576,10 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     this.changed()
     this.prefetch()
     let result: 'ended' | 'stopped'
+    const player = this.player
+    this.currentPlayer = player
     try {
-      result = await this.player.play({
+      result = await player.play({
         audio: item.audio,
         durationSec: item.durationSec ?? 1,
         volume: s.volume,
@@ -586,6 +590,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       if (isFatal(e)) {
         // OBS не подключён или отключился посреди звука: сообщение не теряется, встаёт первым,
         // очередь на паузу. После подключения - "Продолжить".
+        this.currentPlayer = null
         this.current = null
         item.startedAt = null
         this.items.unshift(item)
@@ -604,6 +609,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       )
     }
     this.current = null
+    this.currentPlayer = null
     // Без ключа Fish очередь идёт без звука: не пишем просто "прозвучало".
     if (result === 'ended') this.finish(item, 'done', item.audio === null ? 'без звука' : null)
     else this.finish(item, 'skipped', item.reason ?? 'остановлено')

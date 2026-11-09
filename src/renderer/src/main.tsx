@@ -20,6 +20,14 @@ window.addEventListener('drop', (e) => e.preventDefault())
 const root = document.getElementById('root')
 if (!root) throw new Error('Нет элемента #root в index.html')
 
+// Окно не в фокусе: анимации ожидания ставятся на паузу (см. .unfocused в layout.css).
+const markFocus = (): void => {
+  document.documentElement.classList.toggle('unfocused', !document.hasFocus())
+}
+window.addEventListener('focus', markFocus)
+window.addEventListener('blur', markFocus)
+markFocus()
+
 // Звук запускается отдельно от интерфейса: ошибка при отрисовке любого раздела не должна
 // выключать озвучку.
 startPlayerBridge()

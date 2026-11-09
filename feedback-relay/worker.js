@@ -25,6 +25,12 @@ export default {
       const { success } = await env.LIMITER.limit({ key: ip })
       if (!success) return json(429, { ok: false, error: 'too many' })
     }
+    // Общий потолок на всех: со сменой адресов лимит по IP обходится, а этот не даёт завалить
+    // автора сообщениями (если подключено второе ограничение Cloudflare).
+    if (env.LIMITER_ALL) {
+      const { success } = await env.LIMITER_ALL.limit({ key: 'all' })
+      if (!success) return json(429, { ok: false, error: 'too many' })
+    }
     const declared = Number(request.headers.get('content-length') ?? 0)
     if (declared > MAX_BODY) return json(413, { ok: false, error: 'too large' })
     const raw = await request.text()

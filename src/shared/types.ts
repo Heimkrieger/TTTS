@@ -231,13 +231,15 @@ export interface VoiceInfo {
   uses: number
 }
 
-/** Один шаг проверки связи с Fish. */
+/** Один шаг проверки озвучки: чат, очередь, звук, сервер Fish, ключ, пробная озвучка. */
 export interface CheckStep {
   title: string
   state: 'ok' | 'warn' | 'fail' | 'skip'
   /** Сколько занял шаг, мс. */
   ms: number | null
   detail: string
+  /** Что сделать, если шаг не прошёл. */
+  fix?: string
 }
 
 export interface ConnectionCheck {

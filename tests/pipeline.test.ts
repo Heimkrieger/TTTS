@@ -274,6 +274,35 @@ describe('пайплайн', () => {
   })
 })
 
+describe('стоп-слова стримера с тяжёлым выражением', () => {
+  it('не подвешивают программу: сообщение пропускается с причиной', () => {
+    // Объект настроек собираем мимо схемы: проверяем защиту при выполнении, а не при сохранении.
+    const s = structuredClone(settingsSchema.parse({ version: SETTINGS_VERSION }))
+    s.filters.prefix.enabled = false
+    s.filters.antispam.letterRepeat = 'off'
+    s.filters.antispam.syllableRepeat = 'off'
+    s.filters.length.max = 5000
+    s.filters.stopWords.list = ['/a*a*a*a*a*a*a*a*a*b/']
+    const t0 = Date.now()
+    const r = runFilters(msg('a'.repeat(300)), s, createFilterState(), {
+      now: 0,
+      queueLength: 0,
+      isThirdPartyEmote: () => false
+    })
+    expect(Date.now() - t0).toBeLessThan(1500)
+    expect(r).toMatchObject({ pass: false })
+    if (!r.pass) expect(r.reason).toContain('слишком долго')
+    // Обычное выражение работает как раньше.
+    s.filters.stopWords.list = ['/пло+хо/i']
+    const hit = runFilters(msg('это ПЛОООХО'), s, createFilterState(), {
+      now: 0,
+      queueLength: 0,
+      isThirdPartyEmote: () => false
+    })
+    expect(hit).toMatchObject({ pass: false, reason: 'стоп-слово: /пло+хо/i' })
+  })
+})
+
 describe('несколько префиксов', () => {
   it('подходит любой, длинный проверяется первым, регистр не важен', () => {
     const s = base()

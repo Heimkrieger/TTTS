@@ -1,7 +1,7 @@
 // Очередь: то, что звучит, - подложкой сверху с красной точкой и временем; дальше по порядку
 // обычными строками. Ниже - журнал действий (мьюты, пропуски, ошибки).
 import type { FishStatus, JournalEntry, QueueItemView, QueueSnapshot } from '@shared/types'
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { useConfirm } from './confirm'
 import { HistoryList } from './HistoryList'
 import { Nick } from './badges'
@@ -23,7 +23,9 @@ const clock = (sec: number): string => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-function NowPlaying({ it, now }: { it: QueueItemView; now: number }): React.JSX.Element {
+function NowPlaying({ it }: { it: QueueItemView }): React.JSX.Element {
+  // Часы тикают только здесь: раньше из-за них 4 раза в секунду перерисовывалась вся очередь.
+  const now = useNow(250)
   const elapsed = it.startedAt ? (now - it.startedAt) / 1000 : 0
   const total = it.durationSec ?? 0
   const progress = total > 0 ? Math.min(1, elapsed / total) : 0
@@ -52,7 +54,18 @@ function NowPlaying({ it, now }: { it: QueueItemView; now: number }): React.JSX.
   )
 }
 
-function Waiting({ it, index }: { it: QueueItemView; index: number }): React.JSX.Element {
+/** Строка очереди. memo: снимок очереди приходит новым объектом, а строка обычно та же. */
+const Waiting = memo(WaitingRow, (a, b) => {
+  return (
+    a.index === b.index &&
+    a.it.id === b.it.id &&
+    a.it.status === b.it.status &&
+    a.it.text === b.it.text &&
+    a.it.source === b.it.source
+  )
+})
+
+function WaitingRow({ it, index }: { it: QueueItemView; index: number }): React.JSX.Element {
   return (
     <div className={`wait${it.status === 'synthesizing' ? ' ring-busy' : ''}`}>
       {it.status === 'synthesizing' && <BusyRing />}
@@ -89,7 +102,6 @@ export function QueuePanel(props: {
 }): React.JSX.Element {
   const { queue } = props
   const confirm = useConfirm()
-  const now = useNow(250, queue.current !== null)
   const total = queue.items.length + (queue.current ? 1 : 0)
   const [tab, setTab] = useState<'queue' | 'history'>('queue')
 
@@ -170,7 +182,7 @@ export function QueuePanel(props: {
       </div>
       {tab === 'history' && <HistoryList latestId={queue.history[0]?.id ?? null} />}
       <div className="col-list" hidden={tab === 'history'}>
-        {queue.current && <NowPlaying it={queue.current} now={now} />}
+        {queue.current && <NowPlaying it={queue.current} />}
         {queue.items.map((it, i) => (
           <Waiting key={it.id} it={it} index={i + (queue.current ? 2 : 1)} />
         ))}

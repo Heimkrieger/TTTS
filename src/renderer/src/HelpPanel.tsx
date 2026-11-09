@@ -1,18 +1,17 @@
 // Раздел "Справка": как работают теги эмоций, полный список с переводом и кнопкой "послушать",
 // и готовая шпаргалка для зрителей.
 import { useState } from 'react'
-import type { PublicSettings } from '@shared/settings'
+import { FISH_MODELS, FISH_PRICE_PER_MB, type PublicSettings } from '@shared/settings'
+import { Faq, type HelpTarget } from './Faq'
 import { playTest } from './playTest'
 import { TAG_COMBOS, TAG_GROUPS, type TagInfo } from './tagsHelp'
 import { BusyRing, Icon } from './ui'
 
 /** Модели в таблице "что где работает" (порядок колонок). */
-const MODELS: { id: string; price: string }[] = [
-  { id: 's2.1-pro-free', price: 'бесплатно' },
-  { id: 's2.1-pro', price: '$15 за 1 млн байт' },
-  { id: 's2-pro', price: '$15 за 1 млн байт' },
-  { id: 'drama-3', price: '$50 за 1 млн байт' }
-]
+const MODELS: { id: string; price: string }[] = FISH_MODELS.map((id) => ({
+  id,
+  price: FISH_PRICE_PER_MB[id] === 0 ? 'бесплатно' : `$${FISH_PRICE_PER_MB[id]} за 1 млн байт`
+}))
 
 /** Возможности по моделям, в порядке MODELS. Источник: документация Fish, emotions и drama-3. */
 const FEATURES: { title: string; on: boolean[] }[] = [
@@ -37,6 +36,33 @@ export function viewerCheatSheet(
     `Озвучка: ${start}. Эмоции пишутся в квадратных скобках по-английски перед фразой: ` +
     `[laughing] смех, [whispering] шёпот, [shouting] крик, [sighing] вздох, [sad] грусть, [excited] восторг. ` +
     `Пример: ${prefixOn && prefix ? `${prefix} ` : ''}[excited] я выиграл.${limit}`
+  )
+}
+
+/** Вкладки справки: ответы на частые вопросы и теги эмоций. */
+function HelpTabs(props: {
+  tab: 'faq' | 'tags'
+  setTab: (t: 'faq' | 'tags') => void
+}): React.JSX.Element {
+  return (
+    <div className="col-tabs help-tabs" role="tablist">
+      <button
+        role="tab"
+        aria-selected={props.tab === 'faq'}
+        className={props.tab === 'faq' ? 'on' : ''}
+        onClick={() => props.setTab('faq')}
+      >
+        Частые вопросы
+      </button>
+      <button
+        role="tab"
+        aria-selected={props.tab === 'tags'}
+        className={props.tab === 'tags' ? 'on' : ''}
+        onClick={() => props.setTab('tags')}
+      >
+        Теги эмоций
+      </button>
+    </div>
   )
 }
 
@@ -67,7 +93,15 @@ function TagChip({
   )
 }
 
-export function HelpPanel({ s }: { s: PublicSettings }): React.JSX.Element {
+export function HelpPanel({
+  s,
+  go
+}: {
+  s: PublicSettings
+  /** Перейти в другой раздел программы (кнопки в ответах). */
+  go: (v: HelpTarget) => void
+}): React.JSX.Element {
+  const [tab, setTab] = useState<'faq' | 'tags'>('faq')
   const [playing, setPlaying] = useState<{ tag: string; phase: Phase } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -93,8 +127,18 @@ export function HelpPanel({ s }: { s: PublicSettings }): React.JSX.Element {
     })
   }
 
+  if (tab === 'faq') {
+    return (
+      <div className="page help">
+        <HelpTabs tab={tab} setTab={setTab} />
+        <Faq s={s} go={go} onTags={() => setTab('tags')} />
+      </div>
+    )
+  }
+
   return (
     <div className="page help">
+      <HelpTabs tab={tab} setTab={setTab} />
       <section className="group">
         <h3>Теги эмоций</h3>
         <p className="lead">

@@ -1673,3 +1673,55 @@ dl.lic {
 .crash button {
   margin: var(--space-3) 0 var(--space-4);
 }
+
+/* Справка: вкладки и список частых вопросов. */
+.help-tabs {
+  margin-bottom: var(--space-4);
+}
+
+.faq details {
+  border-bottom: 1px solid var(--color-rule);
+  padding: var(--space-3) 0;
+}
+
+.faq summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: var(--text-lg);
+}
+
+.faq summary:hover {
+  color: var(--color-accent);
+}
+
+.faq-a {
+  max-width: 72ch;
+  padding-top: var(--space-2);
+  color: var(--color-ink-2);
+}
+
+.faq-a p,
+.faq-a ul,
+.faq-a ol {
+  margin: 0 0 var(--space-2);
+}
+
+.faq-a li {
+  margin-bottom: var(--space-1);
+}
+
+.faq-a button {
+  margin: var(--space-1) var(--space-2) 0 0;
+}
+
+/* Бегущая рамка перерисовывается каждый кадр. Пока окно не в фокусе (стример в игре) или в
+   системе выключена анимация, она стоит: не тратим видеокарту зря. */
+.unfocused .busy-ring rect {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .busy-ring rect {
+    animation: none;
+  }
+}
