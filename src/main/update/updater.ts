@@ -23,6 +23,9 @@ export interface ReleaseInfo {
   zipName: string
   zipSize: number
   sigUrl: string
+  /** Те же файлы через API GitHub: запасной путь, если обычная ссылка не отвечает. */
+  zipApiUrl: string | null
+  sigApiUrl: string | null
 }
 
 export interface UpdaterDeps {
@@ -34,7 +37,12 @@ export interface UpdaterDeps {
   /** Папка для скачанного архива и журнала установки (внутри data\). */
   workDir: string
   fetchImpl?: typeof fetch
+  /** Пауза между повторами (для тестов). */
+  sleep?: (ms: number) => Promise<void>
 }
+
+/** Сколько раз пробуем скачать файл релиза и паузы между попытками. */
+const ASSET_RETRY_MS = [2000, 5000]
 
 /** Имя архива для Windows: TwitchTTS-0.2.0-win-x64.zip (как собирает electron-builder). */
 const ZIP_RE = /-win-x64\.zip$/
@@ -44,12 +52,14 @@ export class Updater {
   private release: ReleaseInfo | null = null
   private zipPath: string | null = null
   private readonly fetchImpl: typeof fetch
+  private readonly sleep: (ms: number) => Promise<void>
 
   constructor(
     private readonly deps: UpdaterDeps,
     private readonly onStatus: (s: UpdateStatus) => void = () => {}
   ) {
     this.fetchImpl = deps.fetchImpl ?? fetch
+    this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)))
     this.statusValue =
       !deps.repo || !deps.publicKeyPem
         ? {
@@ -129,13 +139,14 @@ export class Updater {
     this.set({ state: 'downloading', version: r.version, percent: 0 })
     try {
       mkdirSync(this.deps.workDir, { recursive: true })
+      // Сначала маленькая подпись: если её не достать, большой архив качать незачем.
+      const sigRes = await this.fetchAsset(r.sigUrl, r.sigApiUrl, 15_000, 'подпись не скачалась')
+      const sig = Buffer.from((await sigRes.text()).trim(), 'base64')
       const file = join(this.deps.workDir, r.zipName)
-      const hash = await this.fetchToFile(r.zipUrl, file, (p) =>
+      const zipRes = await this.fetchAsset(r.zipUrl, r.zipApiUrl, 15 * 60_000, 'архив не скачался')
+      const hash = await this.saveToFile(zipRes, file, (p) =>
         this.set({ state: 'downloading', version: r.version, percent: p })
       )
-      const sigRes = await this.fetchImpl(r.sigUrl, { signal: AbortSignal.timeout(15_000) })
-      if (!sigRes.ok) throw new Error(`подпись не скачалась (ошибка ${sigRes.status})`)
-      const sig = Buffer.from((await sigRes.text()).trim(), 'base64')
       if (!verifySignature(hash, sig, this.deps.publicKeyPem)) {
         rmSync(file, { force: true })
         throw new Error(
@@ -165,13 +176,42 @@ export class Updater {
     return this.statusValue.state === 'ready' ? this.zipPath : null
   }
 
-  private async fetchToFile(
+  /**
+   * Файл релиза: обычная ссылка, при сбое запасная через API GitHub; всё это до 3 раз с паузами.
+   * GitHub иногда отвечает 5xx на отдельные файлы, а через API тот же файл отдаётся.
+   */
+  private async fetchAsset(
     url: string,
+    apiUrl: string | null,
+    timeoutMs: number,
+    failText: string
+  ): Promise<Response> {
+    const ways: [string, Record<string, string>][] = [[url, {}]]
+    if (apiUrl)
+      ways.push([apiUrl, { Accept: 'application/octet-stream', 'User-Agent': 'tts-updater' }])
+    let last = ''
+    for (let attempt = 0; attempt <= ASSET_RETRY_MS.length; attempt++) {
+      if (attempt > 0) await this.sleep(ASSET_RETRY_MS[attempt - 1] ?? 5000)
+      for (const [u, headers] of ways) {
+        try {
+          const res = await this.fetchImpl(u, { headers, signal: AbortSignal.timeout(timeoutMs) })
+          if (res.ok && res.body) return res
+          await res.body?.cancel()
+          last = `GitHub ответил ошибкой ${res.status}`
+        } catch (e) {
+          last = errText(e)
+        }
+      }
+    }
+    throw new Error(`${failText} (${last}, 3 попытки не помогли)`)
+  }
+
+  private async saveToFile(
+    res: Response,
     file: string,
     onProgress: (percent: number) => void
   ): Promise<string> {
-    const res = await this.fetchImpl(url, { signal: AbortSignal.timeout(15 * 60_000) })
-    if (!res.ok || !res.body) throw new Error(`сервер ответил ошибкой ${res.status}`)
+    if (!res.body) throw new Error('сервер прислал пустой ответ')
     const total = Number(res.headers.get('content-length') ?? 0)
     const hash = createHash('sha256')
     const out = createWriteStream(file)
@@ -201,7 +241,12 @@ export function parseRelease(raw: unknown): ReleaseInfo | null {
   if (typeof raw !== 'object' || raw === null) return null
   const r = raw as { tag_name?: unknown; body?: unknown; assets?: unknown }
   if (typeof r.tag_name !== 'string' || !Array.isArray(r.assets)) return null
-  const assets = r.assets as { name?: unknown; browser_download_url?: unknown; size?: unknown }[]
+  const assets = r.assets as {
+    name?: unknown
+    browser_download_url?: unknown
+    url?: unknown
+    size?: unknown
+  }[]
   const zip = assets.find((a) => typeof a.name === 'string' && ZIP_RE.test(a.name))
   if (!zip || typeof zip.name !== 'string' || typeof zip.browser_download_url !== 'string') {
     return null
@@ -210,13 +255,17 @@ export function parseRelease(raw: unknown): ReleaseInfo | null {
   if (!sig || typeof sig.browser_download_url !== 'string') return null
   const https = (u: string): boolean => u.startsWith('https://')
   if (!https(zip.browser_download_url) || !https(sig.browser_download_url)) return null
+  const api = (u: unknown): string | null =>
+    typeof u === 'string' && u.startsWith('https://api.github.com/') ? u : null
   return {
     version: r.tag_name.replace(/^v/, ''),
     notes: typeof r.body === 'string' ? r.body.slice(0, 2000) : '',
     zipUrl: zip.browser_download_url,
     zipName: zip.name.replace(/[^\w.-]/g, '_'),
     zipSize: typeof zip.size === 'number' ? zip.size : 0,
-    sigUrl: sig.browser_download_url
+    sigUrl: sig.browser_download_url,
+    zipApiUrl: api(zip.url),
+    sigApiUrl: api(sig.url)
   }
 }
 

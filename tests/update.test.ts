@@ -42,20 +42,33 @@ function release(version: string): unknown {
       {
         name: `TwitchTTS-${version}-win-x64.zip`,
         browser_download_url: 'https://github.com/x/y/zip',
+        url: 'https://api.github.com/repos/x/y/releases/assets/1/zip',
         size: ZIP.length
       },
       {
         name: `TwitchTTS-${version}-win-x64.zip.sig`,
         browser_download_url: 'https://github.com/x/y/sig',
+        url: 'https://api.github.com/repos/x/y/releases/assets/2/sig',
         size: 88
       }
     ]
   }
 }
 
-function fakeFetch(opts: { latest: unknown; zip?: Buffer; sig?: string; status?: number }) {
+function fakeFetch(opts: {
+  latest: unknown
+  zip?: Buffer
+  sig?: string
+  status?: number
+  /** Ответ для адреса (код ошибки) вместо файла: так проверяем сбои GitHub. */
+  fail?: (url: string) => number | null
+  log?: string[]
+}) {
   return (async (url: string | URL | Request) => {
     const u = String(url)
+    opts.log?.push(u)
+    const code = opts.fail?.(u)
+    if (code) return new Response('сбой', { status: code })
     if (u.includes('/releases/latest')) {
       return new Response(JSON.stringify(opts.latest), { status: opts.status ?? 200 })
     }
@@ -80,7 +93,8 @@ const make = (fetchImpl: typeof fetch, current = '0.1.0') => {
       publicKeyPem: pub,
       currentVersion: current,
       workDir: dir,
-      fetchImpl
+      fetchImpl,
+      sleep: () => Promise.resolve()
     })
   }
 }
@@ -100,6 +114,57 @@ describe('обновление', () => {
     })
     expect(await u.download()).toMatchObject({ state: 'ready', version: '0.2.0' })
     expect(u.readyZip && readFileSync(u.readyZip).equals(ZIP)).toBe(true)
+  })
+
+  it('обычная ссылка на подпись не отвечает - берём через API; подпись раньше архива', async () => {
+    const log: string[] = []
+    const { u } = make(
+      fakeFetch({
+        latest: release('0.2.0'),
+        log,
+        fail: (url) => (url === 'https://github.com/x/y/sig' ? 504 : null)
+      })
+    )
+    await u.check(true)
+    expect(await u.download()).toMatchObject({ state: 'ready' })
+    const files = log.filter((x) => !x.includes('/releases/latest'))
+    expect(files).toEqual([
+      'https://github.com/x/y/sig',
+      'https://api.github.com/repos/x/y/releases/assets/2/sig',
+      'https://github.com/x/y/zip'
+    ])
+  })
+
+  it('подпись не достать никак - архив не качаем, причина понятна', async () => {
+    const log: string[] = []
+    const { u } = make(
+      fakeFetch({
+        latest: release('0.2.0'),
+        log,
+        fail: (url) => (url.endsWith('sig') ? 504 : null)
+      })
+    )
+    await u.check(true)
+    const s = await u.download()
+    expect(s).toMatchObject({ state: 'error' })
+    if (s.state === 'error')
+      expect(s.error).toBe(
+        'обновление не скачалось: подпись не скачалась (GitHub ответил ошибкой 504, 3 попытки не помогли)'
+      )
+    expect(log.filter((x) => x.endsWith('sig'))).toHaveLength(6)
+    expect(log.some((x) => x.endsWith('zip'))).toBe(false)
+  })
+
+  it('сбой на первой попытке проходит со второй', async () => {
+    let n = 0
+    const { u } = make(
+      fakeFetch({
+        latest: release('0.2.0'),
+        fail: (url) => (url.endsWith('zip') && n++ < 2 ? 502 : null)
+      })
+    )
+    await u.check(true)
+    expect(await u.download()).toMatchObject({ state: 'ready' })
   })
 
   it('подменённый архив не ставится', async () => {
