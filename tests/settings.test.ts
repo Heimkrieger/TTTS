@@ -36,7 +36,7 @@ describe('SettingsStore', () => {
   it('без файла - значения по умолчанию', () => {
     const s = new SettingsStore(file, fakeEncryptor(), silent)
     const p = s.getPublic()
-    expect(p.version).toBe(3)
+    expect(p.version).toBe(4)
     expect(p.twitch.channel).toBe('')
     expect(p.tts.model).toBe('s2.1-pro-free')
     expect(p.fishKey).toBe('none')
@@ -143,15 +143,15 @@ describe('SettingsStore', () => {
 
 describe('migrate', () => {
   it('файл без version считается версией 1 и доводится до текущей', () => {
-    expect(migrate({ twitch: { channel: 'a' } }).version).toBe(3)
+    expect(migrate({ twitch: { channel: 'a' } }).version).toBe(4)
   })
   it('актуальная версия не меняется', () => {
-    const raw = { version: 3, x: 1 }
+    const raw = { version: 4, x: 1 }
     expect(migrate(raw)).toEqual(raw)
   })
   it('1 -> 2: старый одиночный префикс становится списком', () => {
     const out = migrate({ version: 1, filters: { prefix: { enabled: true, value: '!tts' } } })
-    expect(out).toEqual({ version: 3, filters: { prefix: { enabled: true, list: ['!tts'] } } })
+    expect(out).toEqual({ version: 4, filters: { prefix: { enabled: true, list: ['!tts'] } } })
     expect(migrate({ version: 1 }).filters).toEqual({ prefix: { list: ['!!!'] } })
   })
   it('2 -> 3: уровень ролей становится галочками, мастер не показываем, если канал указан', () => {
@@ -163,6 +163,11 @@ describe('migrate', () => {
     const all = migrate({ version: 2, filters: { roles: 'all' } })
     expect(all.filters).toMatchObject({ roles: { everyone: true } })
     expect(all.ui).toBeUndefined()
+  })
+  it('3 -> 4: прежний лимит очереди 20 становится 100, свой лимит не трогаем', () => {
+    expect(migrate({ version: 3, filters: { maxQueue: 20 } }).filters).toEqual({ maxQueue: 100 })
+    expect(migrate({ version: 3, filters: { maxQueue: 50 } }).filters).toEqual({ maxQueue: 50 })
+    expect(migrate({ version: 3 }).version).toBe(4)
   })
   it('файл версии 1 загружается без потерь (префикс перенесён)', () => {
     writeFileSync(

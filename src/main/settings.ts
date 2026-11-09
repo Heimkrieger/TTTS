@@ -63,6 +63,12 @@ const migrations: Record<number, (raw: RawSettings) => RawSettings> = {
       out.ui = { ...(isPlainObject(raw.ui) ? raw.ui : {}), wizardDone: true }
     }
     return out
+  },
+  // 3 -> 4: прежний лимит очереди 20 оказался мал, по умолчанию стало 100.
+  3: (raw) => {
+    const filters = isPlainObject(raw.filters) ? { ...raw.filters } : null
+    if (filters && filters.maxQueue === 20) filters.maxQueue = 100
+    return filters ? { ...raw, version: 4, filters } : { ...raw, version: 4 }
   }
 }
 

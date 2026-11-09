@@ -259,9 +259,9 @@ describe('пайплайн', () => {
   })
 
   it('очередь заполнена', () => {
-    expect(run('!!! привет', base(), { c: { queueLength: 20 } })).toMatchObject({
+    expect(run('!!! привет', base(), { c: { queueLength: 100 } })).toMatchObject({
       pass: false,
-      reason: 'очередь заполнена, в ней уже максимум (20)'
+      reason: 'очередь заполнена, в ней уже максимум (100)'
     })
   })
 

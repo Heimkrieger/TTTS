@@ -6,7 +6,7 @@ import { isRiskyRegex } from './regexSafety'
  * Версия формата файла настроек. 2: префикс стал списком (prefix.list вместо prefix.value).
  * 3: "кто может озвучивать" - галочки вместо одного уровня; мастер первого запуска (ui).
  */
-export const SETTINGS_VERSION = 3
+export const SETTINGS_VERSION = 4
 
 /** Модели Fish. s1 не поддерживаем (отключается 31.12.2026). */
 export const FISH_MODELS = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 'drama-3'] as const
@@ -196,7 +196,7 @@ export const filtersSchema = z.object({
   /** Тот же текст от любого зрителя за N секунд - отказ. 0 - выключено. */
   duplicateSec: z.number().int().min(0).max(3600).default(60),
   /** Если в очереди уже столько сообщений - отказ. */
-  maxQueue: z.number().int().min(1).max(500).default(20)
+  maxQueue: z.number().int().min(1).max(500).default(100)
 })
 
 export type FilterSettings = z.infer<typeof filtersSchema>
