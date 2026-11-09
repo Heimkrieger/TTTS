@@ -1,7 +1,7 @@
 // Точка входа main-процесса: папка данных, логи, настройки, окно, IPC.
 import { hostname, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
-import { FEEDBACK_URL, SUPPORT_URL, UPDATE_PUBLIC_KEY, UPDATE_REPO } from '@shared/brand'
+import { FEEDBACK_URL, UPDATE_PUBLIC_KEY, UPDATE_REPO } from '@shared/brand'
 import { Updater } from './update/updater'
 import { launchApply, readInstallResult, unpackUpdate, type InstallPlan } from './update/install'
 import type { FeedbackDraft } from '@shared/types'
@@ -33,7 +33,7 @@ import { Journal } from './journal'
 import { TtsQueue } from './queue/queue'
 import { SilentPlayer, estimateProvider } from './queue/silent'
 import { existsSync, readFileSync } from 'node:fs'
-import { FishClient } from './tts/fish'
+import { FishClient, FishFatalError, FishPauseError } from './tts/fish'
 import { AudioCache } from './tts/cache'
 import { FishProvider } from './tts/provider'
 import { DailyBudget } from './tts/budget'
@@ -158,14 +158,13 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-/** Сайты, которые программа открывает в браузере (справка Fish, Twitch, поддержка автора). */
+/** Сайты, которые программа открывает в браузере (справка Fish, Twitch). */
 const LINK_HOSTS = ['fish.audio', 'docs.fish.audio', 'twitch.tv', 'www.twitch.tv', 'dev.twitch.tv']
 function isAllowedLink(url: string): boolean {
   try {
     const u = new URL(url)
     if (u.protocol !== 'https:') return false
-    const support = SUPPORT_URL ? new URL(SUPPORT_URL).host : ''
-    return LINK_HOSTS.includes(u.host) || (support !== '' && u.host === support)
+    return LINK_HOSTS.includes(u.host)
   } catch {
     return false
   }
@@ -482,6 +481,8 @@ void app.whenReady().then(() => {
   session.defaultSession.setSpellCheckerEnabled(false)
   const store = new SettingsStore(join(dataDir.dir, 'settings.json'), safeStorageEncryptor, log)
   const journal = new Journal(log)
+  // Настройки не записались на диск (нет места, файл занят): видно в журнале, а не только в файле.
+  store.onSaveError = (text) => journal.add('error', text)
   // Без ключа Fish - беззвучный режим с примерной длительностью.
   const queue = new TtsQueue(estimateProvider, new SilentPlayer(), () => store.current().tts, true)
   // Проверка нагрузки: TTS_FAKE_FISH=1 - подставной Fish без сети и без трат (только разработка).
@@ -494,9 +495,21 @@ void app.whenReady().then(() => {
     () => fishRef?.getKey() ?? null,
     fakeFish ? fakeFishFetch(join(app.getAppPath(), 'tests', 'fixtures', 'fish-sample.mp3')) : fetch
   )
+  // Сбой сохранённых записей звука озвучке не мешает, но молчать о нём нельзя: одна строка в
+  // журнал не чаще раза в 10 минут.
+  let cacheWarnAt = 0
+  const cache = new AudioCache(join(dataDir.dir, 'cache'), undefined, undefined, (reason) => {
+    log.warn('сохранённый звук:', reason)
+    if (Date.now() - cacheWarnAt < 10 * 60_000) return
+    cacheWarnAt = Date.now()
+    journal.add(
+      'warn',
+      `Сохранённые записи звука недоступны: ${reason}. Озвучка работает, но одинаковые фразы готовятся заново. Проверьте свободное место на диске с программой.`
+    )
+  })
   const provider = new FishProvider(
     client,
-    new AudioCache(join(dataDir.dir, 'cache')),
+    cache,
     () => store.current(),
     new DailyBudget(join(dataDir.dir, 'budget.json'), Date.now, (t) => journal.add('warn', t))
   )
@@ -539,9 +552,15 @@ void app.whenReady().then(() => {
     log.info(`звук: ${key === 'silent' ? 'без звука (нет ключа Fish)' : out}`)
   }
   updateBackend()
-  // Ошибки ключа и денег из очереди показываем и в строке Fish внизу.
-  queue.on('journal', (level, text) => {
-    if (level === 'error' && text.startsWith('Озвучка на паузе')) fish.setError(text)
+  // Ошибки ключа, денег и голоса из очереди показываем и в строке Fish внизу. Пауза из-за OBS
+  // или дневного лимита - не ошибка Fish, туда не идёт.
+  queue.on('fatal', (e) => {
+    if (e instanceof FishFatalError || e instanceof FishPauseError) fish.setError(e.message)
+  })
+  // "Продолжить": прежняя ошибка снимается, баланс проверяется заново.
+  queue.on('resumed', () => {
+    fish.setError(null)
+    void fish.refreshBalance()
   })
   // WebSocket встроен в Node 24 (main-процесс Electron 45).
   const chat = new ChatService(
@@ -690,6 +709,7 @@ void app.whenReady().then(() => {
   mainWindow.on('closed', () => (mainWindow = null))
   chat.applySettings()
   app.on('before-quit', () => {
+    cache.flush()
     queue.stop()
     hotkeys.stop()
     void overlay.stop()

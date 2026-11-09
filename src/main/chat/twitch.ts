@@ -24,6 +24,8 @@ export const KEEPALIVE_MS = 60_000
 export const PONG_TIMEOUT_MS = 15_000
 /** Сколько ждём подтверждения входа в канал. */
 export const JOIN_TIMEOUT_MS = 10_000
+/** Вход не подтверждён: через сколько секунд пробуем снова (дальше - каждую минуту). */
+export const JOIN_RETRY_SEC = [15, 30, 60]
 
 const BADGE_MAP: Record<string, Badge> = {
   broadcaster: 'broadcaster',
@@ -137,6 +139,8 @@ export class TwitchChat extends EventEmitter<TwitchChatEvents> {
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null
   private pongTimer: ReturnType<typeof setTimeout> | null = null
   private joinTimer: ReturnType<typeof setTimeout> | null = null
+  private joinRetryTimer: ReturnType<typeof setTimeout> | null = null
+  private joinAttempt = 0
   private statusValue: ChatStatus = { state: 'idle', channel: '', detail: 'Канал не указан' }
 
   constructor(
@@ -165,6 +169,7 @@ export class TwitchChat extends EventEmitter<TwitchChatEvents> {
       this.setStatus('idle', 'Канал не указан')
       return
     }
+    this.joinAttempt = 0
     if (this.socket && this.statusValue.state !== 'connecting' && this.joined) {
       // Соединение живое: просто выходим из старого канала и заходим в новый.
       if (prev) this.socket.send(`PART #${prev}`)
@@ -195,9 +200,11 @@ export class TwitchChat extends EventEmitter<TwitchChatEvents> {
   }
 
   private clearTimers(): void {
-    for (const t of [this.reconnectTimer, this.pongTimer, this.joinTimer]) if (t) clearTimeout(t)
+    for (const t of [this.reconnectTimer, this.pongTimer, this.joinTimer, this.joinRetryTimer])
+      if (t) clearTimeout(t)
     if (this.keepaliveTimer) clearInterval(this.keepaliveTimer)
     this.reconnectTimer = this.pongTimer = this.joinTimer = this.keepaliveTimer = null
+    this.joinRetryTimer = null
   }
 
   private connect(): void {
@@ -241,11 +248,17 @@ export class TwitchChat extends EventEmitter<TwitchChatEvents> {
     this.socket.send(`JOIN #${this.channel}`)
     this.setStatus('joining', `Вход в канал ${this.channel}...`)
     if (this.joinTimer) clearTimeout(this.joinTimer)
+    if (this.joinRetryTimer) clearTimeout(this.joinRetryTimer)
+    this.joinRetryTimer = null
     this.joinTimer = setTimeout(() => {
+      // Это может быть и опечатка в имени, и разовый сбой Twitch: говорим про имя и пробуем снова.
+      const delay = JOIN_RETRY_SEC[Math.min(this.joinAttempt, JOIN_RETRY_SEC.length - 1)] ?? 60
+      this.joinAttempt++
       this.setStatus(
         'error',
-        `Twitch не подтвердил вход в канал "${this.channel}". Проверьте имя канала: возможно, его не существует.`
+        `Twitch не подтвердил вход в канал "${this.channel}". Проверьте имя канала: возможно, его не существует. Следующая попытка через ${delay} с.`
       )
+      this.joinRetryTimer = setTimeout(() => this.join(), delay * 1000)
     }, JOIN_TIMEOUT_MS)
   }
 
@@ -301,8 +314,10 @@ export class TwitchChat extends EventEmitter<TwitchChatEvents> {
         if (room !== this.channel || this.joined === room) return
         this.joined = room
         this.attempt = 0
+        this.joinAttempt = 0
         if (this.joinTimer) clearTimeout(this.joinTimer)
-        this.joinTimer = null
+        if (this.joinRetryTimer) clearTimeout(this.joinRetryTimer)
+        this.joinTimer = this.joinRetryTimer = null
         this.setStatus('connected', null)
         const roomId = msg.tags['room-id']
         if (roomId) this.emit('room', room, roomId)
@@ -313,7 +328,10 @@ export class TwitchChat extends EventEmitter<TwitchChatEvents> {
         const text = msg.params[1] ?? ''
         this.log.warn('chat: NOTICE', id, text)
         if (id === 'msg_channel_suspended') {
+          // Канал заблокирован: повторять вход бессмысленно.
           if (this.joinTimer) clearTimeout(this.joinTimer)
+          if (this.joinRetryTimer) clearTimeout(this.joinRetryTimer)
+          this.joinTimer = this.joinRetryTimer = null
           this.setStatus(
             'error',
             `Канал "${this.channel}" заблокирован Twitch или не существует. Проверьте имя канала в разделе "Подключение".`

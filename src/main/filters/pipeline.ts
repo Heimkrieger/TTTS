@@ -35,6 +35,11 @@ export interface FilterContext {
   queueLength: number
   /** Слово - эмоут 7TV/BTTV/FFZ этого канала. */
   isThirdPartyEmote: (word: string) => boolean
+  /**
+   * Имена эмоутов Twitch из исходного сообщения. Нужны, когда в фильтры идёт уже обрезанный
+   * текст (ручная озвучка): позиции эмоутов от Twitch считаются по исходному.
+   */
+  twitchEmotes?: Set<string>
 }
 
 export function createFilterState(): FilterState {
@@ -164,7 +169,7 @@ export function twitchEmoteNames(m: ChatMessage): Set<string> {
 }
 const emotesStep: Step = (text, m, s, _st, ctx) => {
   const cfg = s.filters.emotes
-  const twitchNames = cfg.twitch ? twitchEmoteNames(m) : new Set<string>()
+  const twitchNames = cfg.twitch ? (ctx.twitchEmotes ?? twitchEmoteNames(m)) : new Set<string>()
   // Делим по пробелам, сохраняя теги целыми: эмоуты убираются только из текста вне тегов.
   const out = splitTags(text).map((seg) => {
     if (seg.type === 'tag') return seg.value

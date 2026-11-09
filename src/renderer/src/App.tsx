@@ -29,7 +29,7 @@ import { startPlayerBridge } from './playerBridge'
 import { configure as configureAudio } from './audio'
 import { TestPanel } from './TestPanel'
 import { Icon, type IconName } from './ui'
-import { APP_NAME, SUPPORT_URL } from '@shared/brand'
+import { APP_NAME } from '@shared/brand'
 
 /** Коротко о Fish для бокового меню и подробно для подсказки. */
 /**
@@ -135,6 +135,7 @@ const EMPTY_QUEUE: QueueSnapshot = {
   history: [],
   paused: false,
   pauseReason: null,
+  stalled: null,
   silent: true
 }
 
@@ -241,11 +242,6 @@ export function App(): React.JSX.Element {
             <button className="support" onClick={() => setFeedbackOpen(true)}>
               Сообщить о проблеме
             </button>
-            {SUPPORT_URL && (
-              <a className="support" href={SUPPORT_URL} target="_blank" rel="noreferrer">
-                Поддержать автора
-              </a>
-            )}
           </div>
           <div className="stat" title={status.detail ?? ''}>
             <span

@@ -141,6 +141,8 @@ export class SettingsStore {
   private fishKeyStatus: SecretStatus = 'none'
   /** Предупреждение, возникшее при загрузке (показывается в UI). */
   readonly loadNotice: string | null
+  /** Настройки не записались на диск: текст для журнала (задаёт основная программа). */
+  onSaveError: (text: string) => void = () => {}
 
   constructor(
     private readonly filePath: string,
@@ -190,12 +192,30 @@ export class SettingsStore {
     }
   }
 
-  /** Запись через временный файл и переименование: при сбое питания не остаётся полуфайла. */
-  private save(): void {
-    mkdirSync(dirname(this.filePath), { recursive: true })
-    const tmp = `${this.filePath}.tmp`
-    writeFileSync(tmp, JSON.stringify(this.data, null, 2), 'utf8')
-    renameSync(tmp, this.filePath)
+  /**
+   * Запись через временный файл и переименование: при сбое питания не остаётся полуфайла.
+   * Возвращает null или причину сбоя для человека (она же уходит в журнал).
+   */
+  private save(): string | null {
+    try {
+      mkdirSync(dirname(this.filePath), { recursive: true })
+      const tmp = `${this.filePath}.tmp`
+      writeFileSync(tmp, JSON.stringify(this.data, null, 2), 'utf8')
+      renameSync(tmp, this.filePath)
+      return null
+    } catch (e) {
+      this.log.error('settings: не записались на диск', e)
+      const code = (e as { code?: unknown } | null)?.code
+      const why =
+        code === 'ENOSPC'
+          ? 'на диске кончилось место'
+          : code === 'EACCES' || code === 'EPERM' || code === 'EBUSY'
+            ? 'файл настроек занят другой программой или нет доступа к папке'
+            : 'ошибка записи'
+      const text = `Настройки не записались на диск: ${why}. До закрытия программы они действуют, после перезапуска вернутся прежние. Освободите место или проверьте доступ к папке программы.`
+      this.onSaveError(text)
+      return text
+    }
   }
 
   private computeSecretStatus(enc: string | null): SecretStatus {
@@ -227,8 +247,14 @@ export class SettingsStore {
     if (!next.success) {
       return { ok: false, error: next.error.issues.map((i) => i.message).join('; ') }
     }
+    const prev = this.data
     this.data = next.data
-    this.save()
+    const failed = this.save()
+    if (failed) {
+      // Окну честно говорим "не сохранено" и возвращаем прежнее, иначе в памяти одно, на диске другое.
+      this.data = prev
+      return { ok: false, error: failed }
+    }
     return { ok: true, value: this.getPublic() }
   }
 
@@ -254,9 +280,14 @@ export class SettingsStore {
       }
     }
     const enc = this.encryptor.encrypt(key.trim()).toString('base64')
+    const prev = this.data
     this.data = { ...this.data, secrets: { ...this.data.secrets, fishApiKey: enc } }
+    const failed = this.save()
+    if (failed) {
+      this.data = prev
+      return { ok: false, error: failed }
+    }
     this.fishKeyStatus = 'ok'
-    this.save()
     return { ok: true, value: this.getPublic() }
   }
 

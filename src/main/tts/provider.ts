@@ -5,7 +5,10 @@ import type { BudgetStatus, TtsStats } from '@shared/types'
 import { BudgetPauseError, DailyBudget, decideModel, FREE_MODEL } from './budget'
 import type { SynthResult, TtsProvider } from '../queue/queue'
 import { AudioCache, cacheKey } from './cache'
-import type { FishClient } from './fish'
+import { FishPauseError, FishRejectedError, FishVoiceGoneError, type FishClient } from './fish'
+
+/** Столько отказов Fish подряд - дело уже не в сообщении: очередь встаёт на паузу. */
+export const REJECTS_TO_PAUSE = 3
 
 export interface ProviderEvents {
   stats: [TtsStats]
@@ -17,6 +20,8 @@ export class FishProvider extends EventEmitter<ProviderEvents> implements TtsPro
   private statsValue: TtsStats = { requests: 0, cacheHits: 0, bytes: 0, costUsd: 0 }
   /** В какой день уже сообщили о переходе на бесплатную модель. */
   private limitNoticeDay = ''
+  /** Сколько запросов подряд Fish отклонил. */
+  private rejects = 0
 
   constructor(
     private readonly client: FishClient,
@@ -79,13 +84,18 @@ export class FishProvider extends EventEmitter<ProviderEvents> implements TtsPro
     }
     const params = paramsFor(model)
     const key = cacheKey(params)
-    const r = await this.client.synthesize(params, opts.signal)
-    // Запрос уже оплачен: если записать в кэш не вышло, звук всё равно отдаём и деньги учитываем.
+    let r: { audio: Buffer; durationSec: number }
     try {
-      this.cache.put(key, r.audio, r.durationSec)
-    } catch {
-      // кэш - только ускорение
+      r = await this.client.synthesize(params, opts.signal)
+      this.rejects = 0
+    } catch (e) {
+      if (e instanceof FishRejectedError)
+        throw await this.explainReject(e, voiceId, opts.voiceId !== undefined)
+      throw e
     }
+    // Запрос уже оплачен: если записать в кэш не вышло, звук всё равно отдаём и деньги учитываем
+    // (о сбое записи кэш сообщает сам).
+    this.cache.put(key, r.audio, r.durationSec)
     // Fish считает деньги по байтам UTF-8 текста: кириллица - 2 байта на букву.
     const bytes = Buffer.byteLength(text, 'utf8')
     this.statsValue.requests++
@@ -95,6 +105,36 @@ export class FishProvider extends EventEmitter<ProviderEvents> implements TtsPro
     this.budget.add(cost)
     this.emit('stats', this.stats)
     return r
+  }
+
+  /**
+   * Fish отклонил запрос. Один отказ - пропускаем сообщение. Несколько подряд - дело не в
+   * тексте: проверяем, жив ли голос (чужой голос автор может удалить или закрыть в любой день),
+   * и возвращаем ошибку, которая ставит очередь на паузу с понятной причиной.
+   * single - разовая проверка голоса из окна: голос проверяем сразу, без счётчика.
+   */
+  private async explainReject(
+    e: FishRejectedError,
+    voiceId: string,
+    single: boolean
+  ): Promise<Error> {
+    if (!single && ++this.rejects < REJECTS_TO_PAUSE) return e
+    if (!single) this.rejects = 0
+    if (voiceId) {
+      try {
+        await this.client.getVoice(voiceId)
+      } catch (v) {
+        if (v instanceof FishVoiceGoneError)
+          return new FishPauseError(
+            'Этот голос больше недоступен на fish.audio: автор удалил или закрыл его. Выберите другой голос в разделе "Голос"' +
+              (single ? '.' : ' и нажмите "Продолжить".')
+          )
+      }
+    }
+    if (single) return e
+    return new FishPauseError(
+      `Fish отклонил ${REJECTS_TO_PAUSE} сообщения подряд (ошибка ${e.status}). Выберите другой голос или модель в разделе "Голос" и нажмите "Продолжить". Если не помогло, отправьте отчёт через "Сообщить о проблеме".`
+    )
   }
 
   private noticeLimit(limitUsd: number): void {

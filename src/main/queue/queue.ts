@@ -25,6 +25,15 @@ export const HISTORY_SIZE = 500
 export const SNAPSHOT_HISTORY = 30
 /** Затухание при пропуске, мс. */
 export const SKIP_FADE_MS = 150
+/**
+ * Сервис озвучки не отвечает (нет сети, перегрузка): паузы перед следующей попыткой, мс.
+ * Сообщения при этом не теряются, а ждут в очереди.
+ */
+export const STALL_MS = [5000, 10_000, 20_000, 40_000, 60_000]
+/** Сообщение падает само по себе (у других получается): столько попыток и хватит. */
+export const ITEM_TRIES = 3
+/** Потолок попыток на одно сообщение, даже если не получается ни у кого. */
+export const ITEM_TRIES_MAX = 8
 
 export interface SynthResult {
   /** null - звука нет (беззвучный режим без ключа Fish). */
@@ -78,6 +87,9 @@ interface Item {
   abort: AbortController | null
   /** Когда встало в очередь (часы очереди): от этого считается задержка перед озвучкой. */
   addedAt: number
+  /** Сколько раз синтез срывался из-за связи и каким был счётчик удач при первом срыве. */
+  tries: number
+  okSeqAtFail: number
 }
 
 export interface QueueEvents {
@@ -86,6 +98,10 @@ export interface QueueEvents {
   item: [QueueItemView]
   /** Сообщение для журнала действий. */
   journal: [level: 'info' | 'warn' | 'error', text: string]
+  /** Очередь встала на паузу из-за ошибки: сама ошибка (чтобы показать её там, где её ждут). */
+  fatal: [error: unknown]
+  /** Нажали "Продолжить". */
+  resumed: []
 }
 
 let seq = 0
@@ -107,6 +123,12 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
    * звучат ни из очереди, ни повтором из истории.
    */
   private deletedIds = new Set<string>()
+  /** Сервис озвучки не отвечает: ждём до следующей попытки, синтез пока не запускаем. */
+  private stallTimer: ReturnType<typeof setTimeout> | null = null
+  private stallReason: string | null = null
+  /** Сколько срывов связи подряд и сколько всего удачных синтезов. */
+  private netFails = 0
+  private okSeq = 0
   private stopped = false
 
   constructor(
@@ -152,7 +174,18 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       startedAt: null,
       trimSec: null,
       abort: null,
-      addedAt: this.now()
+      addedAt: this.now(),
+      tries: 0,
+      okSeqAtFail: 0
+    }
+    // Модератор уже удалил это сообщение: не звучит, как бы оно сюда ни попало.
+    if (this.deletedIds.has(message.id)) {
+      item.status = 'skipped'
+      item.reason = 'удалено модератором'
+      this.toHistory(item)
+      this.emit('item', view(item))
+      this.changed()
+      return view(item)
     }
     // Оценка до синтеза: если точно длиннее лимита - не тратим деньги на запрос.
     const s = this.getSettings()
@@ -192,6 +225,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     this.fatalPause = false
     if (this.current) this.player.resume()
     this.emit('journal', 'info', 'Озвучка продолжена')
+    this.emit('resumed')
     this.changed()
     this.pump()
   }
@@ -225,6 +259,8 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
    * из истории тоже будет нельзя.
    */
   removeByMessageId(messageId: string, reason: string): void {
+    // Запоминаем id, даже если сообщения в очереди не было: позже его могут поставить вручную.
+    this.deletedIds.add(messageId)
     this.markDeleted((m) => m.id === messageId)
     for (const it of [...this.items, ...(this.current ? [this.current] : [])]) {
       if (it.message.id === messageId) this.remove(it.id, reason)
@@ -310,7 +346,9 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       startedAt: null,
       source: 'manual',
       abort: null,
-      addedAt: this.now()
+      addedAt: this.now(),
+      tries: 0,
+      okSeqAtFail: 0
     }
     this.items.unshift(copy)
     this.emit('journal', 'info', `Повтор: ${last.message.displayName}`)
@@ -328,6 +366,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     this.stopped = true
     if (this.waitTimer) clearTimeout(this.waitTimer)
     if (this.holdTimer) clearTimeout(this.holdTimer)
+    if (this.stallTimer) clearTimeout(this.stallTimer)
     for (const it of this.items) it.abort?.abort()
     if (this.current) this.player.stop(0)
   }
@@ -339,6 +378,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       history: this.history.slice(0, SNAPSHOT_HISTORY).map(view),
       paused: this.paused,
       pauseReason: this.paused ? this.pauseReason : null,
+      stalled: this.stallReason,
       silent: this.silent
     }
   }
@@ -384,10 +424,31 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     if (!again) this.emit('journal', 'error', `Озвучка на паузе: ${msg}`)
   }
 
+  /**
+   * Сервис озвучки не ответил: пауза перед следующей попыткой растёт от 5 с до минуты.
+   * Если ожидание уже идёт (два запроса сорвались разом), второе не заводим.
+   */
+  private stall(brief: string): void {
+    this.netFails++
+    if (this.stallTimer) return
+    const ms = STALL_MS[Math.min(this.netFails - 1, STALL_MS.length - 1)] ?? 60_000
+    if (this.stallReason === null)
+      this.emit(
+        'journal',
+        'warn',
+        `Озвучка ждёт: ${brief}. Сообщения не теряются, программа пробует снова сама`
+      )
+    this.stallReason = `${brief}, следующая попытка через ${Math.round(ms / 1000)} с`
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = null
+      this.pump()
+    }, ms)
+  }
+
   /** Главный цикл: синтез заранее + запуск следующего. */
   private pump(): void {
     if (this.stopped) return
-    if (!this.fatalPause) this.prefetch()
+    if (!this.fatalPause && !this.stallTimer) this.prefetch()
     if (this.holdTimer) {
       clearTimeout(this.holdTimer)
       this.holdTimer = null
@@ -458,6 +519,15 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       }
       item.abort = null
       this.setStatus(item, 'ready')
+      this.okSeq++
+      if (this.netFails > 0) {
+        this.netFails = 0
+        this.stallReason = null
+        // Связь есть: остальные сообщения не ждут конца паузы.
+        if (this.stallTimer) clearTimeout(this.stallTimer)
+        this.stallTimer = null
+        this.emit('journal', 'info', 'Связь с сервисом озвучки вернулась, озвучка продолжается')
+      }
     } catch (e) {
       if (!this.items.includes(item)) return
       const msg = e instanceof Error ? e.message : String(e)
@@ -467,8 +537,24 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
         item.abort = null
         this.setStatus(item, 'queued', null)
         this.pauseOnError(msg)
+        this.emit('fatal', e)
         this.changed()
         return
+      }
+      const brief = transientBrief(e)
+      if (brief !== null) {
+        // Нет сети или сервис перегружен: сообщение не теряем. Ждём и пробуем снова; пока ждём,
+        // новые запросы не отправляем. То, что уже готово, продолжает звучать.
+        if (item.tries === 0) item.okSeqAtFail = this.okSeq
+        item.tries++
+        const itsOwnFault = item.tries >= ITEM_TRIES && this.okSeq !== item.okSeqAtFail
+        this.stall(brief)
+        if (!itsOwnFault && item.tries < ITEM_TRIES_MAX) {
+          item.abort = null
+          this.setStatus(item, 'queued', null)
+          this.changed()
+          return
+        }
       }
       this.items.splice(this.items.indexOf(item), 1)
       this.finish(item, 'failed', msg)
@@ -504,6 +590,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
         this.items.unshift(item)
         this.setStatus(item, 'ready', null)
         this.pauseOnError(msg)
+        this.emit('fatal', e)
         this.changed()
         return
       }
@@ -539,6 +626,17 @@ function view(i: Item): QueueItemView {
     durationSec: i.durationSec,
     startedAt: i.startedAt
   }
+}
+
+/**
+ * Временный сбой (поле transient: true, например нет связи с Fish): короткое описание для
+ * подписи под очередью. null - ошибка не временная.
+ */
+function transientBrief(e: unknown): string | null {
+  if (typeof e !== 'object' || e === null) return null
+  const o = e as { transient?: unknown; brief?: unknown }
+  if (o.transient !== true) return null
+  return typeof o.brief === 'string' && o.brief ? o.brief : 'сервис озвучки не отвечает'
 }
 
 /** Ошибка, после которой очередь встаёт на паузу (поле fatal: true, например FishFatalError). */

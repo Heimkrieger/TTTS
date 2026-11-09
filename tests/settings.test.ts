@@ -110,6 +110,19 @@ describe('SettingsStore', () => {
     expect(b.getFishKey()).toBeNull()
   })
 
+  it('настройки не записались на диск: окно получает отказ, значение не меняется', () => {
+    // На месте папки для настроек лежит файл: записать туда нельзя.
+    writeFileSync(join(dir, 'blocker'), 'x')
+    const errors: string[] = []
+    const s = new SettingsStore(join(dir, 'blocker', 'settings.json'), fakeEncryptor(), silent)
+    s.onSaveError = (t) => errors.push(t)
+    const r = s.update({ twitch: { channel: 'abc' } })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('не записались на диск')
+    expect(s.getPublic().twitch.channel).toBe('')
+    expect(errors).toHaveLength(1)
+  })
+
   it('удаление ключа', () => {
     const s = new SettingsStore(file, fakeEncryptor(), silent)
     s.setFishKey('test0000key0000abc')

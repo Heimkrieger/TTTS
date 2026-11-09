@@ -136,6 +136,28 @@ describe('чат -> очередь', () => {
     expect(queue.fullHistory()[0]).toMatchObject({ reason: 'удалено модератором' })
   })
 
+  it('удалённое модератором сообщение нельзя озвучить вручную', () => {
+    const a = say('vasya', 'без префикса, потом удалено')
+    socket.receive(`@target-msg-id=${a} :tmi.twitch.tv CLEARMSG #chan :x`)
+    const r = svc.speakManually(a)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('удалено модератором')
+    expect(queue.snapshot().items).toHaveLength(0)
+    expect(queue.snapshot().current).toBeNull()
+  })
+
+  it('ручная озвучка сообщения с префиксом: эмоуты Twitch не читаются вслух', async () => {
+    store.update({ tts: { enabled: false } })
+    socket.receive(
+      '@id=e1;display-name=vasya;emotes=25:11-15 :vasya!vasya@x PRIVMSG #chan :!!! привет Kappa'
+    )
+    expect(svc.feed.get('e1')?.status).toBe('rejected')
+    expect(svc.speakManually('e1').ok).toBe(true)
+    await flush()
+    const snap = queue.snapshot()
+    expect([snap.current, ...snap.items].map((i) => i?.text)).toEqual(['привет'])
+  })
+
   it('бан модератором убирает все сообщения зрителя из очереди', async () => {
     say('other', '!!! играет')
     say('vasya', '!!! раз')

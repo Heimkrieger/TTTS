@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -236,6 +236,49 @@ describe('кэш и счёт расходов', () => {
     await p.synthesize('новый день', { speed: 1, signal })
     expect(modelOf(2)).toBe('s2.1-pro')
     expect(decideModel('s2.1-pro-free', settings.tts.budget, 999)).toMatchObject({ action: 'use' })
+  })
+
+  it('Fish трижды подряд отклонил запрос, а голоса уже нет: пауза с понятной причиной', async () => {
+    const settings: Settings = settingsSchema.parse({ version: SETTINGS_VERSION })
+    settings.tts.voiceId = 'v1'
+    const bad = (): Response => json(400, { message: 'bad' })
+    const { fetch, calls } = fakeFetch([bad(), bad(), bad(), json(404, {})])
+    const p = new FishProvider(
+      new FishClient(() => 'K', fetch, noSleep),
+      new AudioCache(dir),
+      () => settings
+    )
+    const signal = new AbortController().signal
+    const fail = (t: string): Promise<Error & { fatal?: boolean }> =>
+      p.synthesize(t, { speed: 1, signal }).then(
+        () => new Error('не упало'),
+        (e: Error) => e
+      )
+    // Один и два отказа - пропускаем сообщение, очередь идёт дальше.
+    expect((await fail('раз')).fatal).toBeUndefined()
+    expect((await fail('два')).fatal).toBeUndefined()
+    const third = await fail('три')
+    expect(third.fatal).toBe(true)
+    expect(third.message).toContain('больше недоступен на fish.audio')
+    expect(calls.at(-1)?.url).toContain('/model/v1')
+  })
+
+  it('сбой сохранённых записей не мешает озвучке и не молчит', () => {
+    const errors: string[] = []
+    const key = 'a'.repeat(40)
+    const c = new AudioCache(dir, undefined, undefined, (r) => errors.push(r))
+    c.put(key, Buffer.alloc(10), 1)
+    // Файл записи подменили папкой: чтение падает, но ответ - просто "нет записи".
+    rmSync(join(dir, `${key}.mp3`))
+    mkdirSync(join(dir, `${key}.mp3`))
+    expect(c.get(key)).toBeNull()
+    expect(errors).toHaveLength(1)
+    rmSync(join(dir, `${key}.mp3`), { recursive: true })
+    // Файл звука без записи в списке убирается при запуске.
+    const orphan = `${'b'.repeat(40)}.mp3`
+    writeFileSync(join(dir, orphan), 'x')
+    new AudioCache(dir)
+    expect(readdirSync(dir)).not.toContain(orphan)
   })
 
   it('LRU: при переполнении удаляются давно использованные', () => {

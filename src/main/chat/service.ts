@@ -18,7 +18,8 @@ import {
   isTtsReward,
   matchPrefix,
   runFilters,
-  stripReplyMention
+  stripReplyMention,
+  twitchEmoteNames
 } from '../filters/pipeline'
 import type { Journal } from '../journal'
 import type { TtsQueue } from '../queue/queue'
@@ -206,7 +207,8 @@ export class ChatService extends EventEmitter<ChatServiceEvents> {
     return runFilters({ ...m, text, reply: null }, s, createFilterState(), {
       now: this.now(),
       queueLength: 0,
-      isThirdPartyEmote: (w) => this.emotes.has(w)
+      isThirdPartyEmote: (w) => this.emotes.has(w),
+      twitchEmotes: twitchEmoteNames(m)
     })
   }
 
@@ -214,6 +216,9 @@ export class ChatService extends EventEmitter<ChatServiceEvents> {
   speakManually(messageId: string): Result<null> {
     const e = this.feed.get(messageId)
     if (!e) return { ok: false, error: 'Сообщение уже ушло из ленты.' }
+    // Удалённое модератором (или после бана, таймаута, очистки чата) не звучит и вручную.
+    if (e.status === 'deleted')
+      return { ok: false, error: 'Сообщение удалено модератором, озвучить его нельзя.' }
     const r = this.relaxed(e.message)
     if (!r.pass) return { ok: false, error: `Не прошло фильтры (${r.reason}).` }
     this.feed.setStatus(messageId, 'queued', null, r.text)

@@ -84,11 +84,13 @@ const FeedRow = memo(function FeedRow({
                 onClick={() => onToggleReward(rewardId)}
               />
             )}
-            <IconButton
-              icon="play"
-              title="Озвучить вручную"
-              onClick={() => onSpeak(e.message.id)}
-            />
+            {e.status !== 'deleted' && (
+              <IconButton
+                icon="play"
+                title="Озвучить вручную"
+                onClick={() => onSpeak(e.message.id)}
+              />
+            )}
             <MuteButton login={e.message.user} />
             <IconButton
               icon="ban"

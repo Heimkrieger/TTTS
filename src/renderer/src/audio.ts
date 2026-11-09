@@ -137,7 +137,8 @@ interface Playing {
   fades: GainNode[]
   stopped: boolean
 }
-let current: Playing | null = null
+/** Всё, что играет сейчас. Обычно одно сообщение, но проверка голоса может звучать поверх. */
+const playing = new Map<number, Playing>()
 /** Пропуск пришёл, пока звук ещё готовился (декодировался): остановим сразу после. */
 const stopRequested = new Set<number>()
 
@@ -172,24 +173,36 @@ export async function playAudio(
 ): Promise<'ended' | 'stopped'> {
   if (!main) main = makeOutput()
   setVolume(vol)
-  const outs = [main, ...(monitor ? [monitor] : [])]
-  const started = await Promise.all(outs.map((o) => startOn(o, data, trimSec)))
+  // Основной выход обязан заиграть. Сбой второго ("в наушники") сообщение не отменяет: иначе
+  // очередь пошла бы дальше, а основной выход продолжал бы играть это же сообщение.
+  const [mainRes, monRes] = await Promise.allSettled([
+    startOn(main, data, trimSec),
+    monitor ? startOn(monitor, data, trimSec) : Promise.resolve(null)
+  ])
+  if (mainRes.status === 'rejected') {
+    if (monRes.status === 'fulfilled' && monRes.value) monRes.value.src.stop()
+    throw mainRes.reason
+  }
+  const started = [mainRes.value]
+  if (monRes.status === 'fulfilled' && monRes.value) started.push(monRes.value)
+  else if (monRes.status === 'rejected')
+    problem(
+      `Наушники для себя: звук не проигрался, основной выход работает. Выберите устройство заново в разделе "Звук". Подробности для отчёта: ${String(monRes.reason)}`
+    )
   const me: Playing = {
     id,
     sources: started.map((s) => s.src),
     fades: started.map((s) => s.fade),
     stopped: false
   }
-  current = me
-  const first = started[0]
-  if (!first) return 'ended'
+  playing.set(id, me)
   if (stopRequested.delete(id)) {
     me.stopped = true
     me.sources.forEach((src) => src.stop())
   }
   return new Promise((resolve) => {
-    first.src.onended = () => {
-      if (current === me) current = null
+    mainRes.value.src.onended = () => {
+      playing.delete(id)
       resolve(me.stopped ? 'stopped' : 'ended')
     }
   })
@@ -197,8 +210,9 @@ export async function playAudio(
 
 /** Остановить с быстрым затуханием (без щелчка). */
 export function stopAudio(id: number | null, fadeMs: number): void {
-  const c = current
-  if (!c || (id !== null && c.id !== id)) {
+  const one = id === null ? undefined : playing.get(id)
+  const targets = id === null ? [...playing.values()] : one ? [one] : []
+  if (targets.length === 0) {
     // Этот звук ещё готовится: запоминаем, чтобы не проиграть его целиком после пропуска.
     if (id !== null) {
       if (stopRequested.size > 50) stopRequested.clear()
@@ -206,17 +220,19 @@ export function stopAudio(id: number | null, fadeMs: number): void {
     }
     return
   }
-  c.stopped = true
-  c.sources.forEach((src, i) => {
-    const fade = c.fades[i]
-    const t = src.context.currentTime
-    if (fade) {
-      fade.gain.cancelScheduledValues(t)
-      fade.gain.setValueAtTime(fade.gain.value, t)
-      fade.gain.linearRampToValueAtTime(0, t + fadeMs / 1000)
-    }
-    src.stop(t + fadeMs / 1000)
-  })
+  for (const c of targets) {
+    c.stopped = true
+    c.sources.forEach((src, i) => {
+      const fade = c.fades[i]
+      const t = src.context.currentTime
+      if (fade) {
+        fade.gain.cancelScheduledValues(t)
+        fade.gain.setValueAtTime(fade.gain.value, t)
+        fade.gain.linearRampToValueAtTime(0, t + fadeMs / 1000)
+      }
+      src.stop(t + fadeMs / 1000)
+    })
+  }
 }
 
 export function pauseAudio(): void {

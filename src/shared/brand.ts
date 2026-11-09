@@ -2,12 +2,6 @@
 export const APP_NAME = 'TwitchTTS'
 
 /**
- * Куда ведёт кнопка "Поддержать автора" внизу меню (DonationAlerts или Boosty автора).
- * Программа бесплатная. Пусто - кнопка не показывается.
- */
-export const SUPPORT_URL = ''
-
-/**
  * Адрес посредника для отзывов (feedback-relay/, Cloudflare Worker автора), например
  * https://feedback.<имя>.workers.dev/report. Пусто - форма работает, но вместо отправки
  * предлагает скопировать текст.

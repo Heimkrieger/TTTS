@@ -294,6 +294,63 @@ describe('очередь озвучки', () => {
     expect(b && q.replay(b.id).ok).toBe(false)
   })
 
+  const net = (): Error =>
+    Object.assign(new Error('нет связи с Fish Audio, 3 попытки не помогли'), {
+      transient: true,
+      brief: 'нет связи с Fish Audio'
+    })
+  const failNet = async (text: string): Promise<void> => {
+    provider.pending.get(text)?.reject(net())
+    provider.pending.delete(text)
+    await flush()
+  }
+
+  it('нет связи с сервисом озвучки: сообщение не теряется, очередь ждёт и пробует снова', async () => {
+    const journal: string[] = []
+    q.on('journal', (_l, t) => journal.push(t))
+    q.enqueue(msg('1'), 'a')
+    await flush()
+    await failNet('a')
+    expect(q.snapshot().items.map((i) => [i.text, i.status])).toEqual([['a', 'queued']])
+    expect(q.snapshot().stalled).toContain('нет связи с Fish Audio')
+    expect(q.snapshot().history).toHaveLength(0)
+    // Пока ждём, новые запросы не уходят.
+    q.enqueue(msg('2'), 'b')
+    await flush()
+    expect(provider.calls).toEqual(['a'])
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(provider.calls).toEqual(['a', 'a', 'b'])
+    provider.finish('a')
+    await flush()
+    expect(q.snapshot().stalled).toBeNull()
+    expect(player.playing).toEqual(['a'])
+    expect(journal.some((t) => t.includes('Сообщения не теряются'))).toBe(true)
+    expect(journal.some((t) => t.includes('вернулась'))).toBe(true)
+  })
+
+  it('срывается только одно сообщение, у других получается: после трёх попыток оно пропускается', async () => {
+    q.enqueue(msg('1'), 'a')
+    q.enqueue(msg('2'), 'b')
+    await flush()
+    await failNet('a')
+    provider.finish('b') // у другого получилось: дело в самом сообщении
+    await flush()
+    await failNet('a')
+    await vi.advanceTimersByTimeAsync(5000)
+    await failNet('a')
+    expect(q.fullHistory()[0]).toMatchObject({ text: 'a', status: 'failed' })
+    expect(player.playing).toEqual(['b'])
+  })
+
+  it('удалённое модератором не встаёт в очередь, даже если раньше в ней не было', () => {
+    q.removeByMessageId('m9', 'удалено модератором')
+    expect(q.enqueue(msg('m9'), 'a', { source: 'manual' })).toMatchObject({
+      status: 'skipped',
+      reason: 'удалено модератором'
+    })
+    expect(q.snapshot().items).toHaveLength(0)
+  })
+
   it('мьют/бан зрителя убирает все его сообщения', async () => {
     q.pause()
     q.enqueue(msg('1', 'vasya'), 'a')

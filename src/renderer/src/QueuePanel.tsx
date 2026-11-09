@@ -147,6 +147,14 @@ export function QueuePanel(props: {
                 : `в очереди ${queue.items.length}`}
           </span>
         )}
+        {queue.stalled && tab !== 'history' && (
+          <span
+            className="st st-warn"
+            title="Сообщения не теряются: они ждут в очереди, программа сама пробует снова"
+          >
+            ждёт: {queue.stalled}
+          </span>
+        )}
         {queue.silent && (
           <span
             className="st st-warn"

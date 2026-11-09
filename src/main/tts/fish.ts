@@ -43,6 +43,39 @@ export class FishFatalError extends Error {
 
 export class FishError extends Error {}
 
+/**
+ * Временный сбой: нет связи, таймаут, перегрузка, лимит одновременных запросов. Очередь такое
+ * сообщение не выбрасывает, а ждёт и пробует снова.
+ */
+export class FishTransientError extends FishError {
+  readonly transient = true
+  constructor(
+    message: string,
+    /** Коротко, для подписи под очередью: "нет связи с Fish Audio". */
+    readonly brief: string
+  ) {
+    super(message)
+  }
+}
+
+/** Fish отклонил сам запрос (ошибка 4xx, кроме ключа, денег и лимита запросов). */
+export class FishRejectedError extends FishError {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message)
+  }
+}
+
+/** Голоса с таким id на fish.audio нет: удалён или закрыт автором. */
+export class FishVoiceGoneError extends FishError {}
+
+/** Дальше озвучивать нет смысла, пока стример что-то не поменяет: очередь встаёт на паузу. */
+export class FishPauseError extends Error {
+  readonly fatal = true
+}
+
 type Fetch = typeof fetch
 
 export class FishClient {
@@ -78,6 +111,7 @@ export class FishClient {
       prosody: { speed: p.speed, volume: 0 }
     })
     let lastError = ''
+    let tooMany = false
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       if (attempt > 0) await this.sleep(RETRY_DELAYS_MS[attempt - 1] ?? 3000)
       if (signal?.aborted) throw new FishError('отменено')
@@ -97,6 +131,7 @@ export class FishClient {
           e instanceof Error && e.name === 'TimeoutError'
             ? `Fish не ответил за ${SYNTH_TIMEOUT_MS / 1000} с`
             : 'нет связи с Fish Audio'
+        tooMany = false
         continue
       }
       if (res.ok) {
@@ -109,7 +144,7 @@ export class FishClient {
       const msg = await errorMessage(res)
       if (res.status === 401) {
         throw new FishFatalError(
-          'Ключ Fish Audio неверный или отозван. Проверьте ключ в разделе "Подключение".',
+          'Ключ Fish Audio неверный, отозван или у него кончился срок действия. Замените ключ в разделе "Подключение".',
           'auth'
         )
       }
@@ -122,19 +157,22 @@ export class FishClient {
         )
       }
       if (res.status === 429 || res.status >= 500) {
-        lastError =
-          res.status === 429
-            ? 'Fish: слишком много запросов одновременно'
-            : `Fish перегружен (ошибка ${res.status})`
+        tooMany = res.status === 429
+        lastError = tooMany
+          ? 'Fish: слишком много запросов одновременно'
+          : `Fish перегружен (ошибка ${res.status})`
         continue
       }
-      throw new FishError(
-        `Fish отклонил запрос (ошибка ${res.status}): ${msg}. Сообщение пропущено. Если повторяется, отправьте отчёт через "Сообщить о проблеме".`
+      throw new FishRejectedError(
+        `Fish отклонил запрос (ошибка ${res.status}): ${msg}. Сообщение пропущено.`,
+        res.status
       )
     }
-    throw new FishError(
-      `${lastError}, 3 попытки не помогли. Проверьте интернет и нажмите "Проверить связь" в разделе "Подключение".`
-    )
+    // Лимит запросов - не про интернет: совет другой.
+    const advice = tooMany
+      ? 'Fish ограничивает число запросов одновременно: подождите или увеличьте кулдаун зрителя в разделе "Фильтры".'
+      : 'Проверьте интернет и нажмите "Проверить связь" в разделе "Подключение".'
+    throw new FishTransientError(`${lastError}, 3 попытки не помогли. ${advice}`, lastError)
   }
 
   /** Доступен ли сервер Fish вообще (без ключа): время ответа в мс или ошибка. */
@@ -187,7 +225,7 @@ export class FishClient {
       signal: AbortSignal.timeout(15_000)
     })
     if (res.status === 404)
-      throw new FishError(
+      throw new FishVoiceGoneError(
         'Голос не найден на fish.audio. Откройте его страницу на сайте и скопируйте адрес из браузера.'
       )
     if (!res.ok)

@@ -236,6 +236,23 @@ describe('TwitchChat', () => {
     expect(chat.status.detail).toContain('Проверьте имя канала')
   })
 
+  it('вход не подтверждён: программа сама пробует снова', () => {
+    chat.setChannel('artem')
+    last().onopen?.()
+    vi.advanceTimersByTime(JOIN_TIMEOUT_MS)
+    expect(chat.status.detail).toContain('Следующая попытка через 15 с')
+    const joins = (): number => last().sent.filter((x) => x === 'JOIN #artem').length
+    const before = joins()
+    vi.advanceTimersByTime(15_000)
+    expect(joins()).toBe(before + 1)
+    expect(chat.status.state).toBe('joining')
+    last().receive('@room-id=1 :tmi.twitch.tv ROOMSTATE #artem')
+    expect(chat.status.state).toBe('connected')
+    // После успешного входа повторов больше нет.
+    vi.advanceTimersByTime(40_000)
+    expect(joins()).toBe(before + 1)
+  })
+
   it('сообщения из чужого канала игнорируются', () => {
     const got: ChatMessage[] = []
     chat.on('message', (m) => got.push(m))
