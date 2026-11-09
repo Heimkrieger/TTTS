@@ -3,7 +3,7 @@
 # порт отладки 9444, страница для OBS на 5290. Основную копию программы не трогает.
 # Запуск:  powershell -File scripts\test-instance.ps1          (перезапуск со свежей сборкой)
 #          powershell -File scripts\test-instance.ps1 -Stop    (только остановить)
-param([switch]$Stop, [switch]$NoBuild, [int]$Fake = 0)
+param([switch]$Stop, [switch]$NoBuild, [int]$Fake = 0, [switch]$FakeFish, [switch]$Stats)
 
 $root = Split-Path -Parent $PSScriptRoot
 $port = 9444
@@ -26,5 +26,8 @@ $env:TTS_TEST_INSTANCE = '1'
 $env:TTS_DEBUG_PORT = "$port"
 # -Fake N: фейковый чат, N сообщений в секунду (каждое 11-е - как награда за баллы).
 if ($Fake -gt 0) { $env:TTS_FAKE_CHAT = "$Fake" } else { Remove-Item Env:TTS_FAKE_CHAT -ErrorAction SilentlyContinue }
+# -FakeFish: подставной Fish без сети и трат. -Stats: замеры памяти и задержек раз в 30 с (STATS в журнале).
+if ($FakeFish) { $env:TTS_FAKE_FISH = '1' } else { Remove-Item Env:TTS_FAKE_FISH -ErrorAction SilentlyContinue }
+if ($Stats) { $env:TTS_LOAD_STATS = '1' } else { Remove-Item Env:TTS_LOAD_STATS -ErrorAction SilentlyContinue }
 Start-Process -FilePath "$root\node_modules\electron\dist\electron.exe" -ArgumentList '.' -WorkingDirectory $root -WindowStyle Hidden
 "тестовый запуск: порт отладки $port"

@@ -27,6 +27,7 @@ import { SettingsStore, type Encryptor } from './settings'
 import { ChatService } from './chat/service'
 import { httpFetchJson } from './chat/emotes'
 import { fakeMessage } from './chat/fake'
+import { fakeFishFetch } from './tts/fakeFish'
 import type { SocketLike } from './chat/twitch'
 import { Journal } from './journal'
 import { TtsQueue } from './queue/queue'
@@ -482,10 +483,16 @@ void app.whenReady().then(() => {
   const journal = new Journal(log)
   // Без ключа Fish - беззвучный режим с примерной длительностью.
   const queue = new TtsQueue(estimateProvider, new SilentPlayer(), () => store.current().tts, true)
-  const envKey = devEnvFishKey()
-  if (envKey) log.info('ключ Fish взят из .env (режим разработки)')
+  // Проверка нагрузки: TTS_FAKE_FISH=1 - подставной Fish без сети и без трат (только разработка).
+  const fakeFish = !app.isPackaged && process.env.TTS_FAKE_FISH === '1'
+  const envKey = fakeFish ? 'fake-key' : devEnvFishKey()
+  if (fakeFish) log.warn('Подставной Fish (TTS_FAKE_FISH): сеть не используется')
+  else if (envKey) log.info('ключ Fish взят из .env (режим разработки)')
   let fishRef: FishService | null = null
-  const client = new FishClient(() => fishRef?.getKey() ?? null)
+  const client = new FishClient(
+    () => fishRef?.getKey() ?? null,
+    fakeFish ? fakeFishFetch(join(app.getAppPath(), 'tests', 'fixtures', 'fish-sample.mp3')) : fetch
+  )
   const provider = new FishProvider(
     client,
     new AudioCache(join(dataDir.dir, 'cache')),
@@ -547,8 +554,43 @@ void app.whenReady().then(() => {
   // Проверка нагрузки: TTS_FAKE_CHAT=10 - фейковые сообщения в секунду (только разработка).
   const fakeRate = Number(process.env.TTS_FAKE_CHAT)
   if (!app.isPackaged && fakeRate > 0) {
-    setInterval(() => chat.injectMessage(fakeMessage(Date.now())), 1000 / Math.min(fakeRate, 100))
+    setInterval(
+      () => chat.injectMessage(fakeMessage(Date.now(), store.current().filters.prefix.list[0])),
+      1000 / Math.min(fakeRate, 100)
+    )
     log.warn(`Фейковый чат: ${fakeRate} сообщений в секунду (TTS_FAKE_CHAT)`)
+  }
+  // Замеры при проверке нагрузки: TTS_LOAD_STATS=1 - раз в 30 с память всех процессов,
+  // задержка цикла событий, очередь и число элементов на странице (только разработка).
+  if (!app.isPackaged && process.env.TTS_LOAD_STATS === '1') {
+    let lag = 0
+    let tick = Date.now()
+    setInterval(() => {
+      const now = Date.now()
+      lag = Math.max(lag, now - tick - 100)
+      tick = now
+    }, 100)
+    setInterval(() => {
+      const procs = app
+        .getAppMetrics()
+        .map((m) => `${m.type}:${Math.round(m.memory.workingSetSize / 1024)}`)
+        .join(' ')
+      const q = queue.snapshot()
+      const heap = Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+      const page = mainWindow?.isDestroyed()
+        ? Promise.resolve('нет окна')
+        : (mainWindow?.webContents.executeJavaScript(
+            `(() => { const m = performance.memory; return document.getElementsByTagName('*').length + ' ' + Math.round(m.usedJSHeapSize / 1048576) })()`
+          ) as Promise<string> | undefined)
+      void (page ?? Promise.resolve('нет окна')).then(
+        (r) =>
+          log.info(
+            `STATS main_heap_mb=${heap} lag_ms=${lag} queue=${q.items.length} paused=${q.paused} page_nodes_heap_mb=${r} procs_mb=${procs}`
+          ),
+        (e: unknown) => log.warn(`STATS page error ${String(e)}`)
+      )
+      lag = 0
+    }, 30_000)
   }
   // Горячие клавиши: пропуск, пауза, вкл/выкл озвучки.
   const hotkeys = new Hotkeys(globalShortcut, {

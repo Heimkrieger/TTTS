@@ -1,6 +1,7 @@
 // Фейковый чат для проверки нагрузки.
 // Только в разработке: TTS_FAKE_CHAT=10 - сколько сообщений в секунду. В собранной программе
-// не подключается. Сообщения без префикса, поэтому в очередь и в Fish они не попадают.
+// не подключается. Если передан префикс озвучки, каждое 4-е сообщение начинается с него и
+// уходит в очередь (текст с номером, чтобы не срабатывали кэш и антиповтор).
 import type { Badge, ChatMessage } from '@shared/types'
 
 const NAMES = [
@@ -26,10 +27,12 @@ const BADGES: Badge[][] = [[], [], ['subscriber'], ['moderator', 'subscriber'], 
 
 let seq = 0
 
-export function fakeMessage(now: number): ChatMessage {
+export function fakeMessage(now: number, prefix?: string): ChatMessage {
   const i = seq++
   const pick = <T>(list: T[]): T => list[i % list.length] as T
-  const name = pick(NAMES)
+  const voiced = prefix !== undefined && prefix !== '' && i % 4 === 0
+  // Озвучку просят разные зрители: иначе почти всё отсекает кулдаун на ник.
+  const name = voiced ? `viewer_${i % 300}` : pick(NAMES)
   const badges = BADGES[(i * 7) % BADGES.length] ?? []
   const reply =
     i % 9 === 0 ? { user: 'petya', displayName: 'Petya', text: 'а ты что думаешь?' } : null
@@ -37,7 +40,7 @@ export function fakeMessage(now: number): ChatMessage {
     id: `fake-${i}`,
     user: name.toLowerCase(),
     displayName: name,
-    text: (reply ? '@Petya ' : '') + pick(TEXTS),
+    text: voiced ? `${prefix} ${pick(TEXTS)} ${i}` : (reply ? '@Petya ' : '') + pick(TEXTS),
     badges,
     subMonths: badges.includes('subscriber') ? (i % 30) + 1 : null,
     reply,
