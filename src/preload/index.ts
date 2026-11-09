@@ -56,6 +56,7 @@ const api: TtsApi = {
     status: () => ipcRenderer.invoke(IPC.updateStatus),
     check: () => ipcRenderer.invoke(IPC.updateCheck),
     install: () => ipcRenderer.invoke(IPC.updateInstall),
+    cancel: () => ipcRenderer.invoke(IPC.updateCancel),
     quit: () => ipcRenderer.invoke(IPC.updateQuit),
     onStatus: (cb) => subscribe(IPC.evUpdate, cb)
   },

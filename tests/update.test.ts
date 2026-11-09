@@ -1,6 +1,13 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -8,9 +15,11 @@ import { compareVersions } from '../src/shared/version'
 import { Updater, parseRelease } from '../src/main/update/updater'
 import {
   applyScript,
+  cleanUpdateDir,
   psQuote,
   readInstallResult,
   unpackUpdate,
+  versionMismatch,
   type InstallPlan
 } from '../src/main/update/install'
 
@@ -168,11 +177,60 @@ describe('обновление', () => {
   })
 
   it('подменённый архив не ставится', async () => {
-    const { u } = make(fakeFetch({ latest: release('0.2.0'), zip: Buffer.from('чужой архив') }))
+    // Тот же размер, другое содержимое: подпись не сойдётся.
+    const forged = Buffer.from(ZIP)
+    forged[0] = (forged[0] ?? 0) ^ 1
+    const { u } = make(fakeFetch({ latest: release('0.2.0'), zip: forged }))
     await u.check(true)
     const s = await u.download()
     expect(s).toMatchObject({ state: 'error' })
     if (s.state === 'error') expect(s.error).toContain('подпись')
+    expect(u.readyZip).toBeNull()
+  })
+
+  it('обрыв посреди скачивания: продолжает с того же места, а не с нуля', async () => {
+    const half = Math.floor(ZIP.length / 2)
+    const ranges: (string | null)[] = []
+    let zipCalls = 0
+    const base = fakeFetch({ latest: release('0.2.0') })
+    const f = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).endsWith('/zip')) return base(url, init)
+      const range = new Headers(init?.headers).get('range')
+      ranges.push(range)
+      // Первый ответ обрывается на середине, второй отдаёт остаток по Range.
+      if (zipCalls++ === 0) return new Response(new Uint8Array(ZIP.subarray(0, half)))
+      expect(range).toBe(`bytes=${half}-`)
+      return new Response(new Uint8Array(ZIP.subarray(half)), { status: 206 })
+    }) as typeof fetch
+    const { u } = make(f)
+    await u.check(true)
+    expect(await u.download()).toMatchObject({ state: 'ready' })
+    expect(ranges).toEqual([null, `bytes=${half}-`])
+    expect(u.readyZip && readFileSync(u.readyZip).equals(ZIP)).toBe(true)
+  })
+
+  it('скачивание можно отменить, скачанная часть остаётся для продолжения', async () => {
+    const base = fakeFetch({ latest: release('0.2.0') })
+    let cancel = (): void => {}
+    const f = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).endsWith('/zip')) return base(url, init)
+      // Сервер отдал начало и замолчал: в этот момент пользователь нажимает "Отмена".
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(ZIP.subarray(0, 4)))
+          init?.signal?.addEventListener('abort', () => c.error(new Error('aborted')))
+          setTimeout(cancel, 20)
+        }
+      })
+      return new Response(body)
+    }) as typeof fetch
+    const { u, dir } = make(f)
+    cancel = () => u.cancel()
+    await u.check(true)
+    const s = await u.download()
+    expect(s).toMatchObject({ state: 'error' })
+    if (s.state === 'error') expect(s.error).toContain('отменено')
+    expect(readdirSync(dir).some((x) => x.endsWith('.zip.part'))).toBe(true)
     expect(u.readyZip).toBeNull()
   })
 
@@ -221,6 +279,109 @@ describe('обновление', () => {
     expect(psQuote(p.appDir)).toContain("программы''TTS")
     expect(s).toContain('$appPid = 4242')
   })
+
+  it('старая сборка под новым номером версии не ставится', () => {
+    expect(versionMismatch('0.2.0', '0.2.0', '0.1.7')).toBeNull()
+    expect(versionMismatch('0.1.2', '9.9.9', '0.1.7')).toContain('а релиз назван 9.9.9')
+    expect(versionMismatch('0.1.7', '0.1.7', '0.1.7')).toContain('не новее установленной')
+    expect(versionMismatch(null, '0.2.0', '0.1.7')).toContain('не нашлась версия')
+  })
+
+  it('хвосты прошлых обновлений убираются, недокачанный архив остаётся', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'upd-'))
+    mkdirSync(join(dir, 'stage', 'resources'), { recursive: true })
+    mkdirSync(join(dir, 'backup'))
+    for (const f of ['old.zip', 'apply-update.ps1', 'new.zip.part', 'install.log'])
+      writeFileSync(join(dir, f), 'x')
+    cleanUpdateDir(dir)
+    expect(readdirSync(dir).sort()).toEqual(['install.log', 'new.zip.part'])
+    // Через 3 дня недокачанное тоже не нужно.
+    cleanUpdateDir(dir, Date.now() + 4 * 24 * 60 * 60_000)
+    expect(readdirSync(dir)).toEqual(['install.log'])
+  })
+
+  it.runIf(process.platform === 'win32')(
+    'замена файлов: новое встаёт на место, data не тронута; занятый файл - откат к прежнему',
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), 'upd-apply '))
+      const p = plan(dir)
+      const run = (tries: number): void => {
+        const script = join(dir, 'apply.ps1')
+        writeFileSync(script, '\uFEFF' + applyScript(p, { relaunch: false, tries }), 'utf8')
+        execFileSync('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          script
+        ])
+      }
+      const fill = (ver: string): void => {
+        mkdirSync(join(p.workDir, 'stage', 'resources'), { recursive: true })
+        writeFileSync(join(p.workDir, 'stage', 'TwitchTTS.exe'), `exe ${ver}`)
+        writeFileSync(join(p.workDir, 'stage', 'resources', 'app.asar'), `asar ${ver}`)
+      }
+      // Установленная версия 1 и её данные.
+      mkdirSync(join(p.appDir, 'resources'), { recursive: true })
+      mkdirSync(join(p.appDir, 'data'))
+      writeFileSync(p.exe, 'exe 1')
+      writeFileSync(join(p.appDir, 'resources', 'app.asar'), 'asar 1')
+      writeFileSync(join(p.appDir, 'resources', 'gone-in-2.txt'), 'старый файл')
+      writeFileSync(join(p.appDir, 'data', 'settings.json'), 'настройки')
+      const read = (...parts: string[]): string => readFileSync(join(p.appDir, ...parts), 'utf8')
+
+      // 1. Обычная установка.
+      fill('2')
+      run(2)
+      expect(readFileSync(join(p.workDir, 'install.log'), 'utf8')).toContain('OK 0.2.0')
+      expect(read('TwitchTTS.exe')).toBe('exe 2')
+      expect(read('resources', 'app.asar')).toBe('asar 2')
+      expect(read('data', 'settings.json')).toBe('настройки')
+      // Файлов прежней версии, которых нет в новой, не остаётся.
+      expect(readdirSync(join(p.appDir, 'resources'))).toEqual(['app.asar'])
+      expect(readdirSync(p.workDir).sort()).toEqual(['install.log'])
+
+      // 2. Файл программы занят: всё прежнее возвращается, смеси версий нет.
+      fill('3')
+      const locked = join(p.appDir, 'resources', 'app.asar')
+      // Другой процесс держит файл открытым без права на чтение и переименование (как антивирус).
+      const flag = join(dir, 'locked.flag')
+      const holdScript = join(dir, 'hold.ps1')
+      writeFileSync(
+        holdScript,
+        '\uFEFF' +
+          [
+            `$f = [IO.File]::Open(${psQuote(locked)}, 'Open', 'Read', 'None')`,
+            `Set-Content -LiteralPath ${psQuote(flag)} -Value 1`,
+            'Start-Sleep -Seconds 40'
+          ].join('\r\n'),
+        'utf8'
+      )
+      const holder = spawn('powershell.exe', [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        holdScript
+      ])
+      try {
+        const until = Date.now() + 20_000
+        const nap = new Int32Array(new SharedArrayBuffer(4))
+        while (!existsSync(flag) && Date.now() < until) Atomics.wait(nap, 0, 0, 100)
+        expect(existsSync(flag)).toBe(true)
+        run(1)
+      } finally {
+        holder.kill()
+      }
+      const log = readFileSync(join(p.workDir, 'install.log'), 'utf8')
+      expect(log).toContain('FAIL')
+      expect(log).toContain('Прежняя версия возвращена')
+      expect(read('TwitchTTS.exe')).toBe('exe 2')
+      expect(readdirSync(join(p.appDir, 'resources'))).toEqual(['app.asar'])
+    },
+    60_000
+  )
 
   it('кавычки в путях не ломают строки PowerShell', () => {
     expect(psQuote("a'b")).toBe("'a''b'")

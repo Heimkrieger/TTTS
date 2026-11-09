@@ -8,8 +8,17 @@
 // Скрипт запускается через Start-Process. Напрямую из Electron с detached PowerShell не стартует
 // вовсе, а без detached закрывается вместе с программой.
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { basename, join } from 'node:path'
+import { compareVersions } from '@shared/version'
 
 export interface InstallPlan {
   /** Проверенный архив обновления. */
@@ -27,6 +36,8 @@ export interface InstallPlan {
 
 export const INSTALL_LOG = 'install.log'
 const STAGE = 'stage'
+/** Прежние файлы программы на время замены: при сбое возвращаются на место. */
+const BACKUP = 'backup'
 
 /**
  * Строка PowerShell в одинарных кавычках. PowerShell считает кавычками и типографские
@@ -87,7 +98,11 @@ export function unpackScript(zip: string, dest: string): string {
  * Скрипт замены файлов после закрытия программы. Все значения вписаны в сам скрипт:
  * так не нужно передавать пути с пробелами и кавычками через командную строку.
  */
-export function applyScript(p: InstallPlan): string {
+export function applyScript(
+  p: InstallPlan,
+  /** Для проверок: не запускать программу в конце и число попыток замены. */
+  opts: { relaunch?: boolean; tries?: number } = {}
+): string {
   const stage = join(p.workDir, STAGE)
   return [
     "$ErrorActionPreference = 'Stop'",
@@ -96,8 +111,18 @@ export function applyScript(p: InstallPlan): string {
     `$exe = ${psQuote(p.exe)}`,
     `$zip = ${psQuote(p.zip)}`,
     `$log = ${psQuote(join(p.workDir, INSTALL_LOG))}`,
+    `$backup = ${psQuote(join(p.workDir, BACKUP))}`,
     `$version = ${psQuote(p.version)}`,
     `$appPid = ${Math.trunc(p.appPid)}`,
+    `$tries = ${Math.max(1, Math.trunc(opts.tries ?? 10))}`,
+    '# Вернуть прежние файлы на место: убрать то, что успели положить нового, и перенести старое обратно.',
+    'function Restore-Old($names) {',
+    '  foreach ($n in $names) {',
+    '    $new = Join-Path $appDir $n',
+    '    if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force }',
+    '    Move-Item -LiteralPath (Join-Path $backup $n) -Destination $new -Force',
+    '  }',
+    '}',
     'try {',
     '  Wait-Process -Id $appPid -Timeout 60 -ErrorAction SilentlyContinue',
     '  # Вспомогательные процессы программы (тот же exe) закрываются чуть позже главного.',
@@ -108,27 +133,103 @@ export function applyScript(p: InstallPlan): string {
     '    Start-Sleep -Milliseconds 300',
     '  }',
     "  $items = Get-ChildItem -LiteralPath $stage | Where-Object { $_.Name -ne 'data' }",
-    '  # Антивирус может ненадолго держать файл: несколько попыток.',
+    '  # Замена с откатом: прежний файл или папка сначала переносится в backup, потом кладётся новое.',
+    '  # Если что-то занято (антивирус, не закрывшийся процесс), всё прежнее возвращается на место,',
+    '  # и после паузы пробуем снова. Смеси старых и новых файлов не остаётся.',
     '  $try = 0',
     '  while ($true) {',
+    '    $moved = @()',
     '    try {',
-    '      foreach ($i in $items) { Copy-Item -LiteralPath $i.FullName -Destination $appDir -Recurse -Force }',
+    '      if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Recurse -Force }',
+    '      [void][IO.Directory]::CreateDirectory($backup)',
+    '      foreach ($i in $items) {',
+    '        $old = Join-Path $appDir $i.Name',
+    '        if (Test-Path -LiteralPath $old) {',
+    '          Move-Item -LiteralPath $old -Destination (Join-Path $backup $i.Name) -Force',
+    '          $moved += $i.Name',
+    '        }',
+    '        Copy-Item -LiteralPath $i.FullName -Destination $appDir -Recurse -Force',
+    '      }',
     '      break',
     '    } catch {',
+    '      $why = $_.Exception.Message',
+    '      try { Restore-Old $moved } catch {',
+    "        throw ('не удалось заменить файлы программы и вернуть прежние (' + $why + '). Программа могла повредиться: скачайте её заново со страницы программы')",
+    '      }',
     '      $try++',
-    '      if ($try -ge 10) { throw }',
+    '      if ($try -ge $tries) {',
+    "        throw ('не удалось заменить файлы программы (' + $why + '). Прежняя версия возвращена на место, программа работает на ней. Обновление предложится снова')",
+    '      }',
     '      Start-Sleep -Seconds 1',
     '    }',
     '  }',
+    '  Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue',
     '  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue',
     '  Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue',
     "  Set-Content -LiteralPath $log -Value ('OK ' + $version) -Encoding UTF8",
     '} catch {',
     "  Set-Content -LiteralPath $log -Value ('FAIL ' + $_.Exception.Message) -Encoding UTF8",
     '}',
-    'Start-Process -FilePath $exe',
+    ...(opts.relaunch === false ? [] : ['Start-Process -FilePath $exe']),
     ''
   ].join('\r\n')
+}
+
+/**
+ * Версия программы внутри распакованного обновления (package.json в app.asar; Electron умеет
+ * читать внутри архива asar обычным fs). null - не нашлась.
+ */
+export function stagedVersion(workDir: string): string | null {
+  try {
+    const file = join(workDir, STAGE, 'resources', 'app.asar', 'package.json')
+    const j = JSON.parse(readFileSync(file, 'utf8')) as { version?: unknown }
+    return typeof j.version === 'string' ? j.version : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Подпись стоит на самом архиве, а номер версии релиза в неё не входит. Поэтому сверяем: внутри
+ * архива должна быть ровно та версия, что названа в релизе, и она новее установленной. Иначе
+ * под видом новой версии можно было бы подсунуть старую настоящую сборку.
+ * null - всё сходится, иначе причина отказа.
+ */
+export function versionMismatch(
+  staged: string | null,
+  release: string,
+  current: string
+): string | null {
+  if (staged === null) return 'в архиве обновления не нашлась версия программы'
+  if (compareVersions(staged, release) !== 0)
+    return `в архиве версия ${staged}, а релиз назван ${release}`
+  if (compareVersions(staged, current) <= 0)
+    return `в архиве версия ${staged}, она не новее установленной ${current}`
+  return null
+}
+
+/**
+ * Убрать хвосты прошлых обновлений (до 500 МБ): распакованную копию, запасные файлы, архивы и
+ * скрипты. Недокачанный архив живёт 3 дня, чтобы скачивание можно было продолжить.
+ */
+export function cleanUpdateDir(workDir: string, now: number = Date.now()): void {
+  let names: string[]
+  try {
+    names = readdirSync(workDir)
+  } catch {
+    return
+  }
+  for (const n of names) {
+    const file = join(workDir, n)
+    try {
+      const old = now - statSync(file).mtimeMs > 3 * 24 * 60 * 60_000
+      const junk =
+        n === STAGE || n === BACKUP || /[.](zip|ps1)$/.test(n) || (/[.]part$/.test(n) && old)
+      if (junk) rmSync(file, { recursive: true, force: true })
+    } catch {
+      // файл занят: уберём в следующий раз
+    }
+  }
 }
 
 /** Записать скрипт PowerShell. BOM обязателен: PowerShell 5.1 без него читает не в UTF-8. */
@@ -192,7 +293,11 @@ export async function launchApply(p: InstallPlan): Promise<void> {
   const script = join(p.workDir, 'apply-update.ps1')
   writeScript(script, applyScript(p))
   const log = join(p.workDir, INSTALL_LOG)
-  writeFileSync(log, 'FAIL установщик не запустился после закрытия программы', 'utf8')
+  writeFileSync(
+    log,
+    'FAIL установщик не запустился после закрытия программы. Программа осталась прежней версии, обновление предложится снова',
+    'utf8'
+  )
   const args = [...PS_ARGS, '-WindowStyle', 'Hidden', '-File'].join(' ')
   // Путь к скрипту в двойных кавычках внутри строки аргументов Start-Process.
   const command = [
@@ -221,7 +326,7 @@ export function readInstallResult(workDir: string): { ok: boolean; text: string 
       return { ok: true, text: `Программа обновлена до версии ${line.slice(3)}` }
     return {
       ok: false,
-      text: `Обновление не установилось: ${line.replace(/^FAIL\s*/, '')}. Программа работает на прежней версии, обновление предложится снова.`
+      text: `Обновление не установилось: ${line.replace(/^FAIL\s*/, '').replace(/[.]$/, '')}.`
     }
   } catch {
     return null

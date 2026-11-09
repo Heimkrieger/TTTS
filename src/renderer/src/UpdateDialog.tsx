@@ -2,7 +2,11 @@
 // "Обновить" или "Выйти". Пропустить нельзя. Если скачать не получилось - причина и
 // "Повторить" / "Запустить без обновления" (иначе без интернета программа бы не открывалась).
 import { useState } from 'react'
+import { UPDATE_REPO } from '@shared/brand'
 import type { UpdateStatus } from '@shared/types'
+
+/** Страница, где новую версию можно скачать руками, если программа не смогла сама. */
+const RELEASES_URL = `https://github.com/${UPDATE_REPO}/releases/latest`
 
 export function UpdateDialog({ s }: { s: UpdateStatus }): React.JSX.Element | null {
   // Ошибка после попытки скачать: даём продолжить без обновления.
@@ -56,10 +60,20 @@ export function UpdateDialog({ s }: { s: UpdateStatus }): React.JSX.Element | nu
           <p>Обновление готово. Программа закроется и через несколько секунд запустится заново.</p>
         )}
         {s.state === 'error' && (
-          <p className="err">
-            {s.error}. Попробуйте ещё раз или запустите программу без обновления: окно появится
-            снова при следующем запуске.
-          </p>
+          <>
+            <p className="err">
+              {s.error}. Попробуйте ещё раз или запустите программу без обновления: окно появится
+              снова при следующем запуске.
+            </p>
+            <p className="muted small">
+              Не получается совсем:{' '}
+              <a href={RELEASES_URL} target="_blank" rel="noreferrer">
+                скачайте новую версию вручную
+              </a>{' '}
+              и распакуйте поверх этой папки программы. Настройки и ключ лежат в папке data, они
+              сохранятся.
+            </p>
+          </>
         )}
         <div className="modal-actions">
           {failed || s.state === 'error' ? (
@@ -71,9 +85,18 @@ export function UpdateDialog({ s }: { s: UpdateStatus }): React.JSX.Element | nu
             </>
           ) : (
             <>
-              <button disabled={inProgress} onClick={() => void window.api.update.quit()}>
-                Выйти
-              </button>
+              {s.state === 'downloading' ? (
+                <button
+                  onClick={() => void window.api.update.cancel()}
+                  title="Скачанная часть сохранится: при повторе программа продолжит с неё"
+                >
+                  Отмена
+                </button>
+              ) : (
+                <button disabled={inProgress} onClick={() => void window.api.update.quit()}>
+                  Выйти
+                </button>
+              )}
               <button className="btn-primary" disabled={inProgress} onClick={install}>
                 {inProgress ? 'Обновляю...' : 'Обновить'}
               </button>

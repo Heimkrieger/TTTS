@@ -86,6 +86,8 @@ export interface TtsApi {
     check(): Promise<UpdateStatus>
     /** Скачать, проверить подпись, закрыть программу, установить и запустить заново. */
     install(): Promise<UpdateStatus>
+    /** Отменить идущее скачивание (скачанная часть остаётся для продолжения). */
+    cancel(): Promise<void>
     /** Закрыть программу (кнопка "Выйти" в окне обновления). */
     quit(): Promise<void>
     onStatus(cb: (s: UpdateStatus) => void): () => void
@@ -181,6 +183,7 @@ export const IPC = {
   evQueue: 'queue:on-update',
   updateStatus: 'update:status',
   updateCheck: 'update:check',
+  updateCancel: 'update:cancel',
   updateInstall: 'update:install',
   updateQuit: 'update:quit',
   evUpdate: 'update:on-status',

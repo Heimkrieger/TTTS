@@ -3,7 +3,15 @@ import { hostname, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
 import { FEEDBACK_URL, UPDATE_PUBLIC_KEY, UPDATE_REPO } from '@shared/brand'
 import { Updater } from './update/updater'
-import { launchApply, readInstallResult, unpackUpdate, type InstallPlan } from './update/install'
+import {
+  cleanUpdateDir,
+  launchApply,
+  readInstallResult,
+  stagedVersion,
+  unpackUpdate,
+  versionMismatch,
+  type InstallPlan
+} from './update/install'
 import type { FeedbackDraft } from '@shared/types'
 import { FeedbackSender, buildReport, httpPostJson } from './feedback'
 import { captionText } from './filters/pipeline'
@@ -96,7 +104,8 @@ if (!app.isPackaged && process.env.TTS_DEBUG_PORT) {
 
 // 3. Одна копия программы: две копии писали бы в одни настройки.
 if (!app.requestSingleInstanceLock()) {
-  app.quit()
+  // Сразу выходим: app.quit() дал бы остальному коду успеть тронуть настройки и журнал установки.
+  app.exit(0)
 }
 
 const safeStorageEncryptor: Encryptor = {
@@ -196,8 +205,15 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-/** Сайты, которые программа открывает в браузере (справка Fish, Twitch). */
-const LINK_HOSTS = ['fish.audio', 'docs.fish.audio', 'twitch.tv', 'www.twitch.tv', 'dev.twitch.tv']
+/** Сайты, которые программа открывает в браузере: Fish, Twitch и страница программы на GitHub. */
+const LINK_HOSTS = [
+  'fish.audio',
+  'docs.fish.audio',
+  'twitch.tv',
+  'www.twitch.tv',
+  'dev.twitch.tv',
+  'github.com'
+]
 function isAllowedLink(url: string): boolean {
   try {
     const u = new URL(url)
@@ -761,6 +777,8 @@ void app.whenReady().then(() => {
     )
   const installed = readInstallResult(updateDir)
   if (installed) journal.add(installed.ok ? 'info' : 'error', installed.text)
+  // Хвосты прошлых обновлений (распакованная копия, архивы) занимают до 500 МБ.
+  cleanUpdateDir(updateDir)
   void updater.check(true)
   // Дальше раз в 6 часов: новая версия посреди стрима ничего не прерывает.
   setInterval(() => void updater.check(false), 6 * 60 * 60_000)
@@ -768,7 +786,19 @@ void app.whenReady().then(() => {
   handle(IPC.updateStatus, () => updater.status)
   handle(IPC.updateCheck, () => updater.check(false))
   handle(IPC.updateQuit, () => app.quit())
+  handle(IPC.updateCancel, () => updater.cancel())
+  let installBusy = false
   handle(IPC.updateInstall, async () => {
+    // Второй щелчок, пока первый ещё работает, ничего не запускает.
+    if (installBusy) return updater.status
+    installBusy = true
+    try {
+      return await installUpdate()
+    } finally {
+      installBusy = false
+    }
+  })
+  const installUpdate = async (): Promise<typeof updater.status> => {
     const s = await updater.download()
     const zip = updater.readyZip
     if (s.state !== 'ready' || !zip) return s
@@ -783,6 +813,11 @@ void app.whenReady().then(() => {
     try {
       updater.installing(0)
       await unpackUpdate(plan, (p) => updater.installing(p))
+      const bad = versionMismatch(stagedVersion(updateDir), s.version, app.getVersion())
+      if (bad)
+        throw new Error(
+          `${bad}. Так выглядит подмена архива, поэтому обновление отменено. Сообщите автору через "Сообщить о проблеме"`
+        )
       await launchApply(plan)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -794,7 +829,7 @@ void app.whenReady().then(() => {
     log.info(`обновление ${s.version}: распаковано, установка после закрытия`)
     setTimeout(() => app.quit(), 300)
     return s
-  })
+  }
 
   const win = createWindow()
   mainWindow = win
