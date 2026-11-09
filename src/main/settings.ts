@@ -6,6 +6,9 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
+  DEFAULT_VOICE,
+  OLD_PRESET_VOICES,
+  RECOMMENDED_VOICES,
   SETTINGS_VERSION,
   normalizeChannel,
   PATCHABLE_SECTIONS,
@@ -65,10 +68,39 @@ const migrations: Record<number, (raw: RawSettings) => RawSettings> = {
     return out
   },
   // 3 -> 4: прежний лимит очереди 20 оказался мал, по умолчанию стало 100.
+  // Готовые голоса сменились и называются как на сайте: старые, которые человек не
+  // переименовывал, убираем (текущий оставляем с названием с сайта), новые добавляем.
   3: (raw) => {
+    const out: RawSettings = { ...raw, version: 4 }
     const filters = isPlainObject(raw.filters) ? { ...raw.filters } : null
-    if (filters && filters.maxQueue === 20) filters.maxQueue = 100
-    return filters ? { ...raw, version: 4, filters } : { ...raw, version: 4 }
+    if (filters && filters.maxQueue === 20) {
+      filters.maxQueue = 100
+      out.filters = filters
+    }
+    const tts = isPlainObject(raw.tts) ? { ...raw.tts } : null
+    if (tts && Array.isArray(tts.voices)) {
+      const presets: { id: string; title: string }[] = [DEFAULT_VOICE, ...RECOMMENDED_VOICES]
+      const voices: unknown[] = []
+      for (const v of tts.voices) {
+        const old =
+          isPlainObject(v) && typeof v.id === 'string' ? OLD_PRESET_VOICES[v.id] : undefined
+        if (!old || !isPlainObject(v) || v.title !== old.ours) {
+          voices.push(v)
+          continue
+        }
+        const preset = presets.find((p) => p.id === v.id)
+        if (preset) voices.push({ ...v, title: preset.title })
+        else if (v.id === tts.voiceId) voices.push({ ...v, title: old.site })
+      }
+      for (const p of presets) {
+        if (!voices.some((v) => isPlainObject(v) && v.id === p.id)) {
+          voices.push({ id: p.id, title: p.title })
+        }
+      }
+      tts.voices = voices
+      out.tts = tts
+    }
+    return out
   }
 }
 

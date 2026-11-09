@@ -4,6 +4,7 @@ import {
   FISH_MODELS,
   FISH_PRICE_PER_MB,
   FISH_VOICES_URL,
+  DEFAULT_VOICE,
   RECOMMENDED_VOICES,
   type PublicSettings,
   type SettingsPatch
@@ -128,20 +129,18 @@ export function VoicePanel(props: {
       <section className="group">
         <h3>Готовые голоса</h3>
         <p className="muted small">
-          Популярные русские голоса Fish. Послушайте и добавьте понравившиеся в избранное. Другие
-          голоса можно найти поиском ниже или в{' '}
+          Голоса с fish.audio. Послушайте и добавьте понравившиеся в избранное. Другие голоса можно
+          найти поиском ниже или в{' '}
           <a href={FISH_VOICES_URL} target="_blank" rel="noreferrer">
             каталоге на сайте fish.audio
           </a>
           : откройте голос, скопируйте адрес страницы и вставьте его в поле под избранным.
         </p>
-        {RECOMMENDED_VOICES.map((v) => {
+        {[DEFAULT_VOICE, ...RECOMMENDED_VOICES].map((v) => {
           const saved = t.voices.some((x) => x.id === v.id)
           return (
             <div key={v.id} className="row listrow voice">
-              <span className="voice-name">
-                {v.title} <span className="muted small">{v.note}</span>
-              </span>
+              <span className="voice-name">{v.title}</span>
               <button
                 disabled={noKey || listening !== null}
                 onClick={() => listen(v.id)}

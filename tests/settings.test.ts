@@ -169,6 +169,33 @@ describe('migrate', () => {
     expect(migrate({ version: 3, filters: { maxQueue: 50 } }).filters).toEqual({ maxQueue: 50 })
     expect(migrate({ version: 3 }).version).toBe(4)
   })
+  it('3 -> 4: старые готовые голоса получают названия с сайта, новые добавляются', () => {
+    const out = migrate({
+      version: 3,
+      tts: {
+        voiceId: '6ada82e315e648b6a30a2e2210844cbf',
+        voices: [
+          { id: '0efe389bb7b544c690da2fbeee0831d8', title: 'Rin Tohsaka' },
+          { id: '2a1036d645634680b3cc69aeeb60375b', title: 'Спокойный женский' },
+          { id: 'd567e990d9ad433892ed15ecfd70ce54', title: 'Моя любимая' },
+          { id: 'c2805221e4b544458014d610f82b5aa5', title: 'Дикторский женский' },
+          { id: '6ada82e315e648b6a30a2e2210844cbf', title: 'Дерзкий парень' },
+          { id: '030821e263244933a7209e037bfbb3b5', title: 'Голос Аянами' },
+          { id: 'abc', title: 'свой' }
+        ]
+      }
+    }).tts as { voices: { id: string; title: string }[] }
+    expect(out.voices.map((v) => v.title)).toEqual([
+      'Rin Tohsaka',
+      'Моя любимая',
+      'новости',
+      'Дерзкий Парень',
+      'Голос Аянами',
+      'свой',
+      'Mita Miside (Russian voice)',
+      'Зеленский'
+    ])
+  })
   it('файл версии 1 загружается без потерь (префикс перенесён)', () => {
     writeFileSync(
       file,
