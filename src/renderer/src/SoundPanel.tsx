@@ -40,6 +40,16 @@ export function SoundPanel({
           suffix="с"
           onChange={(v) => set({ tts: { pauseBetweenMs: Math.round(v * 1000) } })}
         />
+        <NumberField
+          label="Задержка перед озвучкой"
+          value={t.chatDelayMs / 1000}
+          min={0}
+          max={30}
+          decimals={1}
+          suffix="с"
+          onChange={(v) => set({ tts: { chatDelayMs: Math.round(v * 1000) } })}
+          hint="сообщение из чата ждёт столько секунд. Если за это время бот или модератор его удалит, оно не прозвучит"
+        />
       </section>
       <section className="group">
         <h3>Ник</h3>

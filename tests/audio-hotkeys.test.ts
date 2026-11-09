@@ -134,7 +134,14 @@ describe('20 сообщений подряд', () => {
           new Promise((r) => setTimeout(() => r({ audio: Buffer.from(text), durationSec: 1 }), 700))
       },
       player,
-      () => ({ speed: 1, volume: 100, pauseBetweenMs: 300, maxDurationSec: 45, overLimit: 'skip' }),
+      () => ({
+        speed: 1,
+        volume: 100,
+        pauseBetweenMs: 300,
+        chatDelayMs: 0,
+        maxDurationSec: 45,
+        overLimit: 'skip'
+      }),
       false
     )
     const msg = (i: number): ChatMessage => ({

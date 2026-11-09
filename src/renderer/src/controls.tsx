@@ -75,6 +75,7 @@ export function NumberField(props: {
   /** Знаков после запятой (0 - только целые). */
   decimals?: number
   onChange: (v: number) => void
+  hint?: string
 }): React.JSX.Element {
   const [text, setText] = useDraft(String(props.value))
   const commit = (): void => {
@@ -85,7 +86,10 @@ export function NumberField(props: {
   }
   return (
     <label className="ctl num">
-      <span className="ctl-label">{props.label}</span>
+      <span className="ctl-label">
+        {props.label}
+        {props.hint && <small className="hint">{props.hint}</small>}
+      </span>
       <input
         type="number"
         value={text}

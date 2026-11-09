@@ -12,7 +12,8 @@ import type {
   QueueItemView,
   QueueSnapshot,
   QueueSource,
-  QueueStatus
+  QueueStatus,
+  Result
 } from '@shared/types'
 
 /** Примерная скорость речи на скорости 1.0: символов в секунду (для оценки до синтеза). */
@@ -52,6 +53,11 @@ export interface QueueSettings {
   speed: number
   volume: number
   pauseBetweenMs: number
+  /**
+   * Сколько сообщение из чата ждёт после прихода, прежде чем зазвучать, мс. За это время бот
+   * или модератор успевает его удалить, и тогда оно не звучит вовсе. Синтез идёт заранее.
+   */
+  chatDelayMs: number
   maxDurationSec: number
   overLimit: 'skip' | 'trim'
 }
@@ -70,6 +76,8 @@ interface Item {
   /** Обрезать до стольких секунд (режим "обрезать"). */
   trimSec: number | null
   abort: AbortController | null
+  /** Когда встало в очередь (часы очереди): от этого считается задержка перед озвучкой. */
+  addedAt: number
 }
 
 export interface QueueEvents {
@@ -92,6 +100,13 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
   /** Пауза из-за ошибки (ключ, деньги, лимит, OBS): заранее не синтезируем, чтобы не долбить Fish. */
   private fatalPause = false
   private waitTimer: ReturnType<typeof setTimeout> | null = null
+  /** Ждём, пока у первого в очереди выйдет задержка перед озвучкой. */
+  private holdTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * Сообщения, удалённые модератором (сам удалил, бан, таймаут, очистка чата). Они больше не
+   * звучат ни из очереди, ни повтором из истории.
+   */
+  private deletedIds = new Set<string>()
   private stopped = false
 
   constructor(
@@ -136,7 +151,8 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       audio: null,
       startedAt: null,
       trimSec: null,
-      abort: null
+      abort: null,
+      addedAt: this.now()
     }
     // Оценка до синтеза: если точно длиннее лимита - не тратим деньги на запрос.
     const s = this.getSettings()
@@ -204,20 +220,46 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
     return true
   }
 
-  /** Модератор удалил сообщение: убрать из очереди, а если звучит - остановить. */
+  /**
+   * Модератор удалил сообщение: убрать из очереди, а если звучит - остановить. Повторить его
+   * из истории тоже будет нельзя.
+   */
   removeByMessageId(messageId: string, reason: string): void {
+    this.markDeleted((m) => m.id === messageId)
     for (const it of [...this.items, ...(this.current ? [this.current] : [])]) {
       if (it.message.id === messageId) this.remove(it.id, reason)
     }
   }
 
-  /** Бан, таймаут, мьют: убрать все сообщения зрителя. Возвращает сколько убрано. */
-  removeByUser(login: string, reason: string): number {
+  /**
+   * Убрать все сообщения зрителя. Возвращает сколько убрано. moderated - это бан или таймаут
+   * (Twitch стёр его сообщения в чате): тогда и повтор из истории запрещён. Мьют и чёрный
+   * список в программе сообщения в чате не стирают, повтор остаётся.
+   */
+  removeByUser(login: string, reason: string, moderated = false): number {
+    if (moderated) this.markDeleted((m) => m.user === login)
     let n = 0
     for (const it of [...this.items, ...(this.current ? [this.current] : [])]) {
       if (it.message.user === login && this.remove(it.id, reason)) n++
     }
     return n
+  }
+
+  /** Модератор очистил весь чат: всё убрать, повторять прежние сообщения нельзя. */
+  clearChat(reason: string): number {
+    this.markDeleted(() => true)
+    return this.clear(reason)
+  }
+
+  private markDeleted(match: (m: ChatMessage) => boolean): void {
+    for (const it of [...this.items, ...this.history, ...(this.current ? [this.current] : [])]) {
+      if (match(it.message)) this.deletedIds.add(it.message.id)
+    }
+    // Список растёт весь стрим: держим не больше, чем помнит история, с запасом.
+    if (this.deletedIds.size > HISTORY_SIZE * 4) {
+      const keep = [...this.deletedIds].slice(-HISTORY_SIZE * 2)
+      this.deletedIds = new Set(keep)
+    }
   }
 
   /** Очистить очередь (то, что звучит, тоже останавливается). */
@@ -241,18 +283,25 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
   }
 
   /** Повторить последнее прозвучавшее (из готового аудио, без нового запроса). */
-  replayLast(): QueueItemView | null {
+  replayLast(): Result<QueueItemView> {
     const last = this.history.find((x) => x.status === 'done')
-    return last ? this.replay(last.id) : null
+    if (!last) return { ok: false, error: 'Повторять нечего: ещё ничего не прозвучало' }
+    return this.replay(last.id)
   }
 
   /**
    * Повторить сообщение из истории: в начало очереди. Аудио есть в памяти - играется сразу;
    * нет - синтез заново, и если голос и настройки те же, звук берётся из кэша без запроса к Fish.
    */
-  replay(itemId: string): QueueItemView | null {
+  replay(itemId: string): Result<QueueItemView> {
     const last = this.history.find((x) => x.id === itemId)
-    if (!last) return null
+    if (!last)
+      return { ok: false, error: 'Этого сообщения уже нет в истории (хранятся последние 500)' }
+    if (this.deletedIds.has(last.message.id))
+      return {
+        ok: false,
+        error: `Сообщение ${last.message.displayName} удалено модератором (или за бан, таймаут, очистку чата), повторять его нельзя`
+      }
     const copy: Item = {
       ...last,
       id: `q${++seq}`,
@@ -260,13 +309,14 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
       reason: null,
       startedAt: null,
       source: 'manual',
-      abort: null
+      abort: null,
+      addedAt: this.now()
     }
     this.items.unshift(copy)
     this.emit('journal', 'info', `Повтор: ${last.message.displayName}`)
     this.changed()
     this.pump()
-    return view(copy)
+    return { ok: true, value: view(copy) }
   }
 
   /** Вся история (до HISTORY_SIZE), новые сверху. */
@@ -277,6 +327,7 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
   stop(): void {
     this.stopped = true
     if (this.waitTimer) clearTimeout(this.waitTimer)
+    if (this.holdTimer) clearTimeout(this.holdTimer)
     for (const it of this.items) it.abort?.abort()
     if (this.current) this.player.stop(0)
   }
@@ -337,9 +388,32 @@ export class TtsQueue extends EventEmitter<QueueEvents> {
   private pump(): void {
     if (this.stopped) return
     if (!this.fatalPause) this.prefetch()
+    if (this.holdTimer) {
+      clearTimeout(this.holdTimer)
+      this.holdTimer = null
+    }
     if (this.current || this.paused || this.waitTimer) return
     const next = this.items[0]
     if (!next || next.status !== 'ready') return
+    // Сообщение из чата сначала выжидает: вдруг его удалят. Своё (повтор, проверка) - сразу.
+    if (next.source === 'chat' || next.source === 'reward') {
+      const left = next.addedAt + this.getSettings().chatDelayMs - this.now()
+      if (left > 0) {
+        this.holdTimer = setTimeout(() => {
+          this.holdTimer = null
+          this.pump()
+        }, left)
+        return
+      }
+    }
+    if (this.deletedIds.has(next.message.id)) {
+      // Защита на всякий случай: удалённое не звучит, даже если как-то осталось в очереди.
+      this.items.shift()
+      this.finish(next, 'skipped', 'удалено модератором')
+      this.changed()
+      this.pump()
+      return
+    }
     this.items.shift()
     void this.playItem(next)
   }

@@ -68,7 +68,11 @@ beforeEach(() => {
   vi.useFakeTimers()
   dir = mkdtempSync(join(tmpdir(), 'tts-svc-'))
   store = new SettingsStore(join(dir, 'settings.json'), enc, silent)
-  store.update({ twitch: { channel: 'chan' }, filters: { userCooldownSec: 0 } })
+  store.update({
+    twitch: { channel: 'chan' },
+    filters: { userCooldownSec: 0 },
+    tts: { chatDelayMs: 0 }
+  })
   now = 1_800_000_000_000
   player = new HoldPlayer()
   queue = new TtsQueue(estimateProvider, player, () => store.current().tts, true)
@@ -116,6 +120,20 @@ describe('чат -> очередь', () => {
     await flush()
     expect(player.stops).toBe(1)
     expect(svc.feed.get(a)?.status).toBe('deleted')
+  })
+
+  it('бот удалил сообщение через секунду после прихода: оно так и не зазвучало', async () => {
+    store.update({ tts: { chatDelayMs: 2000 } })
+    const a = say('vasya', '!!! спам')
+    await flush()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(queue.snapshot().current).toBeNull()
+    socket.receive(`@target-msg-id=${a} :tmi.twitch.tv CLEARMSG #chan :спам`)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(queue.snapshot().current).toBeNull()
+    expect(player.stops).toBe(0)
+    expect(svc.feed.get(a)?.status).toBe('deleted')
+    expect(queue.fullHistory()[0]).toMatchObject({ reason: 'удалено модератором' })
   })
 
   it('бан модератором убирает все сообщения зрителя из очереди', async () => {

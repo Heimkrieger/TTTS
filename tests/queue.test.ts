@@ -86,7 +86,14 @@ beforeEach(() => {
   vi.useFakeTimers()
   provider = new FakeProvider()
   player = new FakePlayer()
-  settings = { speed: 1, volume: 100, pauseBetweenMs: 300, maxDurationSec: 45, overLimit: 'skip' }
+  settings = {
+    speed: 1,
+    volume: 100,
+    pauseBetweenMs: 300,
+    chatDelayMs: 0,
+    maxDurationSec: 45,
+    overLimit: 'skip'
+  }
   q = new TtsQueue(provider, player, () => settings, false)
 })
 afterEach(() => {
@@ -142,11 +149,14 @@ describe('очередь озвучки', () => {
     expect(hist.map((h) => h.text)).toEqual(['t6', 't5', 't4', 't3', 't2', 't1', 't0'])
     const calls = provider.calls.length
     const oldest = hist[6]
-    expect(oldest && q.replay(oldest.id)).toMatchObject({ text: 't0', source: 'manual' })
+    expect(oldest && q.replay(oldest.id)).toMatchObject({
+      ok: true,
+      value: { text: 't0', source: 'manual' }
+    })
     await flush()
     expect(provider.calls.length).toBe(calls + 1) // аудио t0 уже выгружено из памяти
     expect(player.playing.at(-1)).toBe('t0')
-    expect(q.replay('нет-такого')).toBeNull()
+    expect(q.replay('нет-такого')).toMatchObject({ ok: false })
   })
 
   it('порядок FIFO, заранее синтезирует не больше 2, пауза между сообщениями', async () => {
@@ -221,6 +231,67 @@ describe('очередь озвучки', () => {
       'удалено модератором',
       'удалено модератором'
     ])
+  })
+
+  it('задержка перед озвучкой: удалённое за это время не звучит вовсе, синтез идёт заранее', async () => {
+    settings.chatDelayMs = 2000
+    provider.auto = 2
+    q.enqueue(msg('m1'), 'a')
+    q.enqueue(msg('m2'), 'b')
+    await flush()
+    expect(provider.calls).toEqual(['a', 'b']) // синтез уже идёт
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(player.playing).toEqual([]) // ещё ждём
+    q.removeByMessageId('m1', 'удалено модератором') // бот удалил на 1.5 с
+    await vi.advanceTimersByTimeAsync(500)
+    expect(player.playing).toEqual(['b'])
+    expect(q.fullHistory()[0]).toMatchObject({ text: 'a', reason: 'удалено модератором' })
+  })
+
+  it('задержка не касается повтора: своё звучит сразу', async () => {
+    provider.auto = 1
+    q.enqueue(msg('m1'), 'a')
+    await flush()
+    player.end()
+    await vi.advanceTimersByTimeAsync(300)
+    settings.chatDelayMs = 5000
+    expect(q.replayLast().ok).toBe(true)
+    await flush()
+    expect(player.playing).toEqual(['a', 'a'])
+  })
+
+  it('удалённое модератором нельзя повторить из истории, причина понятна', async () => {
+    provider.auto = 3
+    q.enqueue(msg('m1', 'vasya'), 'a')
+    await flush()
+    player.end()
+    await vi.advanceTimersByTimeAsync(300)
+    q.enqueue(msg('m2', 'petya'), 'b')
+    await flush()
+    player.end()
+    await vi.advanceTimersByTimeAsync(300)
+    q.enqueue(msg('m3', 'kolya'), 'c')
+    await flush()
+    player.end()
+    await vi.advanceTimersByTimeAsync(300)
+    const [c, b, a] = q.fullHistory()
+    // Модератор удалил уже прозвучавшее сообщение.
+    q.removeByMessageId('m3', 'удалено модератором')
+    const r = q.replayLast()
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('удалено модератором')
+    // Бан: сообщения зрителя повторить нельзя. Мьют в программе - можно.
+    q.removeByUser('vasya', 'бан от модератора', true)
+    q.removeByUser('petya', 'мьют')
+    expect(a && q.replay(a.id).ok).toBe(false)
+    expect(b && q.replay(b.id).ok).toBe(true)
+    // Модератор очистил чат: ничего из прежнего не повторяется.
+    await flush()
+    player.end()
+    await vi.advanceTimersByTimeAsync(300)
+    q.clearChat('чат очищен модератором')
+    expect(c && q.replay(c.id).ok).toBe(false)
+    expect(b && q.replay(b.id).ok).toBe(false)
   })
 
   it('мьют/бан зрителя убирает все его сообщения', async () => {

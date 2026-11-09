@@ -269,6 +269,11 @@ export const settingsSchema = z.object({
       volume: z.number().int().min(0).max(200).default(100),
       /** Пауза между сообщениями, мс. */
       pauseBetweenMs: z.number().int().min(0).max(10000).default(300),
+      /**
+       * Задержка перед озвучкой сообщения из чата, мс: за это время бот или модератор успевает
+       * удалить сообщение, и оно не прозвучит.
+       */
+      chatDelayMs: z.number().int().min(0).max(30000).default(2000),
       /** Лимит длительности одного сообщения, секунды. */
       maxDurationSec: z.number().int().min(3).max(600).default(45),
       /** Что делать, если длиннее лимита: пропустить или обрезать (с плавным затуханием). */

@@ -328,11 +328,12 @@ function registerIpc({
     if (n) journal.add('info', `Очередь очищена (${n})`)
   })
   handle(IPC.queueReplay, () => {
-    if (!queue.replayLast()) journal.add('warn', 'Повторять нечего: ещё ничего не прозвучало')
+    const r = queue.replayLast()
+    if (!r.ok) journal.add('warn', r.error)
   })
   handle(IPC.queueReplayItem, (_e, itemId: unknown): Result<null> => {
-    if (queue.replay(id(itemId))) return { ok: true, value: null }
-    return { ok: false, error: 'Этого сообщения уже нет в истории (хранятся последние 500)' }
+    const r = queue.replay(id(itemId))
+    return r.ok ? { ok: true, value: null } : r
   })
   handle(IPC.queueHistory, () => queue.fullHistory())
   queue.on('update', (s) => send(IPC.evQueue, s))

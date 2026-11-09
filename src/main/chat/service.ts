@@ -97,12 +97,12 @@ export class ChatService extends EventEmitter<ChatServiceEvents> {
       if (e) this.emit('feed', [{ ...e }])
     })
     this.chat.on('userCleared', (login, reason) => {
-      const n = this.queue.removeByUser(login, `${reason} от модератора`)
+      const n = this.queue.removeByUser(login, `${reason} от модератора`, true)
       if (n) this.journal.add('info', `${login}: ${reason}, убрано из очереди: ${n}`)
       this.emitFeed(this.feed.markUserCleared(login, reason))
     })
     this.chat.on('chatCleared', () => {
-      const n = this.queue.clear('чат очищен модератором')
+      const n = this.queue.clearChat('чат очищен модератором')
       if (n) this.journal.add('info', `Модератор очистил чат, очередь очищена (${n})`)
       this.emitFeed(this.feed.markAllCleared())
     })
