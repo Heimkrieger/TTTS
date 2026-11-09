@@ -627,9 +627,26 @@ void app.whenReady().then(() => {
   if (fakeFish) log.warn('Подставной Fish (TTS_FAKE_FISH): сеть не используется')
   else if (envKey) log.info('ключ Fish взят из .env (режим разработки)')
   let fishRef: FishService | null = null
+  let slowWarnAt = 0
   const client = new FishClient(
     () => fishRef?.getKey() ?? null,
-    fakeFish ? fakeFishFetch(join(app.getAppPath(), 'tests', 'fixtures', 'fish-sample.mp3')) : fetch
+    fakeFish
+      ? fakeFishFetch(join(app.getAppPath(), 'tests', 'fixtures', 'fish-sample.mp3'))
+      : fetch,
+    undefined,
+    (t) => {
+      // Время каждого запроса - в файл журнала: по нему видно, где была задержка.
+      log.info(
+        `fish tts: ${t.ok ? 'готово' : 'не вышло'} за ${t.ms} мс, попыток ${t.attempts}${t.note ? ` (${t.note})` : ''}`
+      )
+      // Долгий запрос объясняем на экране: иначе это выглядит как "озвучка зависла".
+      if (t.ms < 8000 || Date.now() - slowWarnAt < 60_000) return
+      slowWarnAt = Date.now()
+      journal.add(
+        'warn',
+        `Fish готовил сообщение ${Math.round(t.ms / 1000)} с вместо обычных двух${t.attempts > 1 ? ', запрос пришлось повторить' : ''}. Озвучка в это время ждала. Если повторяется, сервис Fish перегружен.`
+      )
+    }
   )
   // Сбой сохранённых записей звука озвучке не мешает, но молчать о нём нельзя: одна строка в
   // журнал не чаще раза в 10 минут.

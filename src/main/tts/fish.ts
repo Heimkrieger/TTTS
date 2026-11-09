@@ -9,6 +9,22 @@ import { mp3Duration } from './mp3'
 
 export const FISH_API = 'https://api.fish.audio'
 export const SYNTH_TIMEOUT_MS = 20_000
+/**
+ * Сколько ждём начала ответа на каждой попытке. Обычно Fish начинает отвечать за 1-2 с; если
+ * запрос завис, незачем ждать все 20 с: вторая попытка почти всегда проходит сразу.
+ */
+export const FIRST_ANSWER_MS = [8000, 12_000, SYNTH_TIMEOUT_MS]
+
+/** Как прошёл запрос на озвучку: для журнала и для поиска причин задержек. */
+export interface SynthTiming {
+  /** Сколько заняло всё вместе с повторами, мс. */
+  ms: number
+  /** Сколько попыток понадобилось. */
+  attempts: number
+  ok: boolean
+  /** Что случилось на неудачных попытках. */
+  note: string
+}
 /** Повторы при 429 и 5xx: задержки перед попытками 2 и 3. */
 export const RETRY_DELAYS_MS = [1000, 3000]
 
@@ -83,7 +99,9 @@ export class FishClient {
     private readonly getKey: () => string | null,
     private readonly fetchImpl: Fetch = fetch,
     private readonly sleep: (ms: number) => Promise<void> = (ms) =>
-      new Promise((r) => setTimeout(r, ms))
+      new Promise((r) => setTimeout(r, ms)),
+    /** Время каждого запроса на озвучку (в файл журнала; долгие - в журнал на экране). */
+    private readonly onTiming: (t: SynthTiming) => void = () => {}
   ) {}
 
   private headers(): Record<string, string> {
@@ -112,31 +130,50 @@ export class FishClient {
     })
     let lastError = ''
     let tooMany = false
+    const began = Date.now()
+    const notes: string[] = []
+    const report = (ok: boolean, attempts: number): void =>
+      this.onTiming({ ms: Date.now() - began, attempts, ok, note: notes.join('; ') })
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       if (attempt > 0) await this.sleep(RETRY_DELAYS_MS[attempt - 1] ?? 3000)
       if (signal?.aborted) throw new FishError('отменено')
-      const timeout = AbortSignal.timeout(SYNTH_TIMEOUT_MS)
+      // Два срока: сначала ждём начала ответа (коротко), потом - весь звук целиком.
+      const firstMs = FIRST_ANSWER_MS[attempt] ?? SYNTH_TIMEOUT_MS
+      const own = new AbortController()
+      const expire = (): void =>
+        own.abort(Object.assign(new Error('timeout'), { name: 'TimeoutError' }))
+      let timer = setTimeout(expire, firstMs)
+      let limitSec = firstMs / 1000
       let res: Response
+      let audio: Buffer | null = null
       try {
         res = await this.fetchImpl(`${FISH_API}/v1/tts`, {
           method: 'POST',
           headers: { ...this.headers(), 'Content-Type': 'application/json', model: p.model },
           body,
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout
+          signal: signal ? AbortSignal.any([signal, own.signal]) : own.signal
         })
+        clearTimeout(timer)
+        timer = setTimeout(expire, SYNTH_TIMEOUT_MS)
+        limitSec = SYNTH_TIMEOUT_MS / 1000
+        // Чтение звука тоже под сроком и тоже повторяется при обрыве.
+        if (res.ok) audio = Buffer.from(await res.arrayBuffer())
       } catch (e) {
         if (e instanceof FishFatalError) throw e
         if (signal?.aborted) throw new FishError('отменено')
         lastError =
           e instanceof Error && e.name === 'TimeoutError'
-            ? `Fish не ответил за ${SYNTH_TIMEOUT_MS / 1000} с`
+            ? `Fish не ответил за ${limitSec} с`
             : 'нет связи с Fish Audio'
         tooMany = false
+        notes.push(`попытка ${attempt + 1}: ${lastError}`)
         continue
+      } finally {
+        clearTimeout(timer)
       }
-      if (res.ok) {
-        const audio = Buffer.from(await res.arrayBuffer())
+      if (audio) {
         const durationSec = mp3Duration(audio)
+        report(durationSec !== null, attempt + 1)
         if (durationSec === null)
           throw new FishError('Fish прислал испорченный звук, сообщение пропущено')
         return { audio, durationSec }
@@ -161,13 +198,16 @@ export class FishClient {
         lastError = tooMany
           ? 'Fish: слишком много запросов одновременно'
           : `Fish перегружен (ошибка ${res.status})`
+        notes.push(`попытка ${attempt + 1}: ${lastError}`)
         continue
       }
+      report(false, attempt + 1)
       throw new FishRejectedError(
         `Fish отклонил запрос (ошибка ${res.status}): ${msg}. Сообщение пропущено.`,
         res.status
       )
     }
+    report(false, RETRY_DELAYS_MS.length + 1)
     // Лимит запросов - не про интернет: совет другой.
     const advice = tooMany
       ? 'Fish ограничивает число запросов одновременно: подождите или увеличьте кулдаун зрителя в разделе "Фильтры".'

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +7,8 @@ import {
   FishError,
   FishFatalError,
   parseVoiceId,
-  type FishSynthParams
+  type FishSynthParams,
+  type SynthTiming
 } from '../src/main/tts/fish'
 import { mp3Duration } from '../src/main/tts/mp3'
 import { AudioCache } from '../src/main/tts/cache'
@@ -157,6 +158,38 @@ describe('клиент Fish', () => {
       '2a1036d645634680b3cc69aeeb60375b'
     )
     expect(parseVoiceId('просто текст')).toBeNull()
+  })
+})
+
+describe('запрос к Fish завис', () => {
+  it('ждём начала ответа 8 с, а не 20: повтор проходит, время запроса записывается', async () => {
+    vi.useFakeTimers()
+    try {
+      let n = 0
+      // Первый запрос не отвечает вовсе, пока его не оборвут; второй отвечает сразу.
+      const f = ((_url: unknown, init?: RequestInit) =>
+        n++ === 0
+          ? new Promise((_resolve, reject) =>
+              init?.signal?.addEventListener('abort', () => reject(init.signal?.reason as Error))
+            )
+          : Promise.resolve(mp3())) as typeof fetch
+      const timings: SynthTiming[] = []
+      const c = new FishClient(
+        () => 'K',
+        f,
+        noSleep,
+        (t) => timings.push(t)
+      )
+      const p = c.synthesize(P)
+      await vi.advanceTimersByTimeAsync(8000)
+      expect((await p).durationSec).toBeGreaterThan(2)
+      expect(timings).toHaveLength(1)
+      expect(timings[0]).toMatchObject({ ok: true, attempts: 2 })
+      expect(timings[0]?.ms).toBeGreaterThanOrEqual(8000)
+      expect(timings[0]?.note).toContain('Fish не ответил за 8 с')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
