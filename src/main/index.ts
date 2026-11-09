@@ -926,28 +926,50 @@ void app.whenReady().then(() => {
   // Закрытие окна завершает программу. Если в очереди что-то есть, сначала спрашиваем:
   // случайный крестик посреди стрима не должен молча выключать озвучку.
   let quitting = false
+  let askTimer: ReturnType<typeof setTimeout> | null = null
   win.on('close', (e) => {
-    if (quitting || TEST_INSTANCE) return
+    if (quitting) return
     const s = queue.snapshot()
     const n = s.items.length + (s.current ? 1 : 0)
     if (n === 0) return
     e.preventDefault()
-    void dialog
-      .showMessageBox(win, {
-        type: 'question',
-        buttons: ['Закрыть программу', 'Отмена'],
-        defaultId: 1,
-        cancelId: 1,
-        noLink: true,
-        title: app.getName(),
-        message: 'Закрыть программу?',
-        detail: `Сообщений в очереди: ${n}. Они не прозвучат, озвучка чата остановится.`
-      })
-      .then((r) => {
-        if (r.response !== 0) return
-        quitting = true
-        win.close()
-      })
+    if (!TEST_INSTANCE) {
+      if (win.isMinimized()) win.restore()
+      win.show()
+    }
+    // Спрашиваем своим окном, в стиле программы. Системное окно Windows - только запасной путь,
+    // если интерфейс не отозвался за полторы секунды (завис или упал).
+    if (askTimer) clearTimeout(askTimer)
+    askTimer = setTimeout(() => {
+      askTimer = null
+      // Тихий тестовый запуск системных окон не показывает.
+      if (TEST_INSTANCE) return
+      void dialog
+        .showMessageBox(win, {
+          type: 'question',
+          buttons: ['Закрыть программу', 'Отмена'],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+          title: app.getName(),
+          message: 'Закрыть программу?',
+          detail: `Сообщений в очереди: ${n}. Они не прозвучат, озвучка чата остановится.`
+        })
+        .then((r) => {
+          if (r.response !== 0) return
+          quitting = true
+          win.close()
+        })
+    }, 1500)
+    send(IPC.evAppCloseAsk, n)
+  })
+  on(IPC.appCloseAskShown, () => {
+    if (askTimer) clearTimeout(askTimer)
+    askTimer = null
+  })
+  handle(IPC.appCloseNow, () => {
+    quitting = true
+    win.close()
   })
   chat.applySettings()
   app.on('before-quit', () => {

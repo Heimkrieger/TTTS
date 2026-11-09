@@ -28,6 +28,7 @@ import { HelpPanel } from './HelpPanel'
 import { configure as configureAudio } from './audio'
 import { TestPanel } from './TestPanel'
 import { Icon, type IconName } from './ui'
+import { useConfirm } from './confirm'
 import { APP_NAME } from '@shared/brand'
 
 /** Коротко о Fish для бокового меню и подробно для подсказки. */
@@ -152,6 +153,24 @@ export function App(): React.JSX.Element {
   const [fish, setFish] = useState<FishStatus | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [update, setUpdate] = useState<UpdateStatus | null>(null)
+
+  // Закрытие с непустой очередью: вопрос своим окном, а не системным.
+  const confirm = useConfirm()
+  useEffect(
+    () =>
+      window.api.app.onCloseAsk((n) => {
+        window.api.app.closeAskShown()
+        void confirm({
+          title: 'Закрыть программу?',
+          text: `Сообщений в очереди: ${n}. Они не прозвучат, озвучка чата остановится.`,
+          confirmText: 'Закрыть программу',
+          danger: true
+        }).then((ok) => {
+          if (ok) void window.api.app.closeNow()
+        })
+      }),
+    [confirm]
+  )
 
   // Устройство вывода, монитор, компрессор - при запуске и при каждом изменении.
   const audioKey = settings ? JSON.stringify(settings.audio) : ''

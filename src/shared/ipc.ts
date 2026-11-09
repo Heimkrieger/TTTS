@@ -42,6 +42,12 @@ export interface TtsApi {
     openDataDir(): Promise<void>
     /** Перезагрузить окно программы (после ошибки интерфейса). */
     reloadWindow(): Promise<void>
+    /** Программа спрашивает, закрываться ли (в очереди n сообщений). */
+    onCloseAsk(cb: (n: number) => void): () => void
+    /** Окно показало вопрос (иначе программа спросит системным окном). */
+    closeAskShown(): void
+    /** Пользователь подтвердил закрытие. */
+    closeNow(): Promise<void>
   }
   settings: {
     get(): Promise<PublicSettings>
@@ -157,6 +163,9 @@ export const IPC = {
   appInfo: 'app:info',
   appOpenDataDir: 'app:open-data-dir',
   appReloadWindow: 'app:reload-window',
+  evAppCloseAsk: 'app:on-close-ask',
+  appCloseAskShown: 'app:close-ask-shown',
+  appCloseNow: 'app:close-now',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   settingsChanged: 'settings:changed',

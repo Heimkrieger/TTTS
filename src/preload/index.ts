@@ -14,7 +14,10 @@ const api: TtsApi = {
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo),
     openDataDir: () => ipcRenderer.invoke(IPC.appOpenDataDir),
-    reloadWindow: () => ipcRenderer.invoke(IPC.appReloadWindow)
+    reloadWindow: () => ipcRenderer.invoke(IPC.appReloadWindow),
+    onCloseAsk: (cb) => subscribe(IPC.evAppCloseAsk, cb),
+    closeAskShown: () => ipcRenderer.send(IPC.appCloseAskShown),
+    closeNow: () => ipcRenderer.invoke(IPC.appCloseNow)
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),
