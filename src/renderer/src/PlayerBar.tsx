@@ -148,7 +148,7 @@ export function PlayerBar(props: {
         min={0}
         max={200}
         step={5}
-        format={(v) => (v === 0 ? '0 % (звук выключен)' : `${v} %`)}
+        format={(v) => (v === 0 ? '0 % (выкл)' : `${v} %`)}
         onCommit={(v) => props.set({ tts: { volume: v } })}
       />
 

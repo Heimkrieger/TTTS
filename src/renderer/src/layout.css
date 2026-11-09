@@ -1725,3 +1725,17 @@ dl.lic {
     animation: none;
   }
 }
+
+/* Итог проверки красит только строку вывода, а не названия всех шагов. */
+.check.err,
+.check.ok {
+  color: var(--color-ink);
+}
+
+.check.err .check-verdict {
+  color: var(--color-live);
+}
+
+.check.ok .check-verdict {
+  color: var(--color-accent);
+}
